@@ -24,6 +24,8 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#include <time.h>
 #include <errno.h>
 #include <fcntl.h>
 
@@ -89,7 +91,7 @@ static unsigned char DNS_PADDING[] = {
 
 #define LEN_PADDING sizeof(DNS_PADDING)
 
-static int get_tunnel(char *port, char *secret)
+static int get_tunnel(char *port)
 {
     // We use an IPv6 socket to cover both IPv4 and IPv6.
     int tunnel = socket(AF_INET6, SOCK_DGRAM, 0);
@@ -113,6 +115,9 @@ static int get_tunnel(char *port, char *secret)
         usleep(100000);
     }
 
+	return tunnel;
+
+#if 0
     // Receive packets till the secret matches.
     char packet[1024];
     socklen_t addrlen;
@@ -131,6 +136,7 @@ static int get_tunnel(char *port, char *secret)
     // Connect to the client as we only handle one client at a time.
     connect(tunnel, (sockaddr *)&addr, addrlen);
     return tunnel;
+#endif
 }
 
 static void build_parameters(char *parameters, int size, int argc, char **argv)
@@ -170,6 +176,200 @@ static void build_parameters(char *parameters, int size, int argc, char **argv)
 
 //-----------------------------------------------------------------------------
 
+struct client_info {
+	int flags;
+	char cookies[16];
+
+	time_t lastup;
+	in_addr cltip;
+	struct sockaddr target;
+	unsigned total_in, total_out;
+};
+
+struct ipv4_info {
+	unsigned noused1;
+	unsigned noused2;
+	unsigned noused3;
+	unsigned source;
+	unsigned target;
+};
+
+static int is_same_network(const unsigned char *data, size_t len)
+{
+	unsigned match0;
+	unsigned int source, target;
+	struct ipv4_info *iphdr = (struct ipv4_info *)data;
+
+	source = htonl(iphdr->source);
+	target = htonl(iphdr->target);
+
+	match0 = (source ^ target) & 0xFFFFFF00;
+	return (match0 == 0);
+}
+
+static int _ll_argc = 0;
+static char *_ll_argv[100];
+static char _hi_secret[100];
+
+static struct client_info _ll_client_info[256] = {0};
+
+static int handshake_packet(int tunnel, const void *data, size_t len, struct sockaddr *from, socklen_t fromlen)
+{
+	int count;
+	const char *check;
+	const char *cookies;
+	const char *handinfo;
+
+	struct msghdr msg0;
+	struct iovec  iovecs[10];
+
+    char parameters[1024];
+
+	handinfo = (const char *)data;
+
+	if (len <= 0 || handinfo[0] != 0) {
+		return 0;
+	}
+
+	if (strcmp(_hi_secret, handinfo + 1)) {
+		return 0;
+	}
+
+	cookies = "";
+	check = _hi_secret + 2 + strlen(_hi_secret);
+	if ((int)(check - handinfo) < len && check[0] != 0) {
+		cookies = check;
+	}
+
+	int cookie0 = 0;
+	struct client_info *cltinfo;
+	struct client_info *btrinfo;
+	struct client_info *badinfo;
+
+	for (int i = 2; i < 255; i++) {
+		cltinfo = &_ll_client_info[i];
+		if (0 == strcmp(cltinfo->cookies, cookies)) {
+			btrinfo = cltinfo;
+			cookie0 = 1;
+			break;
+		}
+
+		if (cltinfo->flags == 0) {
+			btrinfo = cltinfo;
+		} else if (cltinfo->lastup + 100 < time(NULL)) {
+			badinfo = cltinfo;
+		}
+	}
+
+	if (btrinfo == NULL) {
+		btrinfo = badinfo;
+		cookie0 = 0;
+	}
+
+	if (btrinfo == NULL) {
+		fprintf(stderr, "there no idle client, could not allocate!\n");
+		return 0;
+	}
+
+	if (cookie0 == 0) {
+		char ipv4[32];
+		int part1 = random();
+		int part2 = (int)(long)btrinfo;
+		sprintf(btrinfo->cookies, "%08x.%08x", part1, part2);
+
+		sprintf(ipv4, "10.2.0.%d", btrinfo - _ll_client_info);
+		btrinfo->cltip.s_addr = inet_addr(ipv4);
+	}
+
+	msg0.msg_flags = 0;
+	msg0.msg_control = NULL;
+	msg0.msg_controllen = 0;
+
+	iovecs[0].iov_len = LEN_PADDING;
+	iovecs[0].iov_base = DNS_PADDING;
+	iovecs[1].iov_len = sizeof(parameters);
+	iovecs[1].iov_base = parameters;
+
+	msg0.msg_name = (void *)from;
+	msg0.msg_namelen = fromlen;
+
+	count = _ll_argc;
+	char _vv_a[] = "-a";
+	char _vv_c[] = "-c";
+
+	_ll_argv[count++] = _vv_a;
+	_ll_argv[count++] = inet_ntoa(btrinfo->cltip);
+	_ll_argv[count++] = _vv_c;
+	_ll_argv[count++] = btrinfo->cookies;
+
+	btrinfo->flags = 1;
+	btrinfo->lastup = time(NULL);
+	memcpy(&btrinfo->target, from, fromlen);
+
+	build_parameters(parameters, sizeof(parameters), count, _ll_argv);
+	count = sendmsg(tunnel, &msg0, MSG_NOSIGNAL);
+	return 0;
+}
+
+static int dispatch_packet(int tunnel, const void *data, size_t len, struct sockaddr *from, socklen_t fromlen)
+{
+	struct msghdr msg0;
+	struct iovec  iovecs[10];
+
+	iovecs[0].iov_len = LEN_PADDING;
+	iovecs[0].iov_base = DNS_PADDING;
+
+	msg0.msg_flags = 0;
+	msg0.msg_control = NULL;
+	msg0.msg_controllen = 0;
+
+	int index, count;
+	unsigned int source, target;
+	struct ipv4_info *iphdr = (struct ipv4_info *)data;
+	struct client_info *cltinfo = NULL;
+
+	source = htonl(iphdr->source);
+	target = htonl(iphdr->target);
+
+	index = (target & 0xFF);
+	cltinfo = &_ll_client_info[index];
+
+	if (from != NULL && fromlen >= sizeof(*from)) {
+		int chk_index = (source & 0xFF);
+		struct client_info *srcinfo = &_ll_client_info[chk_index];
+
+		if (memcmp(from, &srcinfo->target, fromlen)) {
+			char reject[] = ".REJECT";
+
+			msg0.msg_name = (void *)from;
+			msg0.msg_namelen = fromlen;
+			msg0.msg_iov  = iovecs;
+			msg0.msg_iovlen = 2;
+
+			reject[0] = 0;
+			iovecs[1].iov_len = sizeof(reject);
+			iovecs[1].iov_base = reject;
+
+			count = sendmsg(tunnel, &msg0, MSG_NOSIGNAL);
+			return 0;
+		}
+
+		srcinfo->lastup = time(NULL);
+	}
+
+	msg0.msg_name = (void *)&cltinfo->target;
+	msg0.msg_namelen = sizeof(cltinfo->target);
+	msg0.msg_iov  = iovecs;
+	msg0.msg_iovlen = 2;
+
+	iovecs[1].iov_len = len;
+	iovecs[1].iov_base = (void *)data;
+
+	count = sendmsg(tunnel, &msg0, MSG_NOSIGNAL);
+
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 5) {
@@ -177,8 +377,8 @@ int main(int argc, char **argv)
                "\n"
                "Options:\n"
                "  -m <MTU> for the maximum transmission unit\n"
-               "  -a <address> <prefix-length> for the private address\n"
-               "  -r <address> <prefix-length> for the forwarding route\n"
+               "  -a <address/prefix-length> for the private address\n"
+               "  -r <address/prefix-length> for the forwarding route\n"
                "  -d <address> for the domain name server\n"
                "  -s <domain> for the search domain\n"
                "\n"
@@ -188,15 +388,121 @@ int main(int argc, char **argv)
         exit(1);
     }
 
+	strcpy(_hi_secret, argv[3]);
+	memcpy(_ll_argv, argv, argc * sizeof(argv[0]));
+	_ll_argc = argc;
+
+#if 0
     // Parse the arguments and set the parameters.
     char parameters[1024];
     build_parameters(parameters, sizeof(parameters), argc, argv);
+#endif
+
+    // Wait for a tunnel.
+    int tunnel;
+	int dirty = 0;
+	time_t lastup = time(NULL);
 
     // Get TUN interface.
     int interface = get_interface(argv[1]);
 
-    // Wait for a tunnel.
-    int tunnel;
+	do {
+		int maxfd;
+		int count;
+		fd_set readfds;
+		struct timeval timeout;
+
+		dirty = 0;
+		lastup = time(NULL);
+		tunnel = get_tunnel(argv[2]);
+
+		maxfd = (tunnel < interface? tunnel: interface);
+		for (; ; ) {
+			FD_ZERO(&readfds);
+			FD_SET(tunnel, &readfds);
+			FD_SET(interface, &readfds);
+
+			timeout.tv_sec = 1;
+			timeout.tv_usec = 0;
+			count = select(maxfd + 1, &readfds, NULL, NULL, &timeout);
+
+			if (count == -1) {
+				fprintf(stderr, "select error %s\n", strerror(errno));
+				exit(-1);
+			}
+
+			if (count > 0) {
+				int length;
+				int tunnel_prepare;
+				int interface_prepare;
+
+				struct sockaddr from;
+				unsigned char packet[2048];
+				socklen_t fromlen = sizeof(from);
+
+				tunnel_prepare = FD_ISSET(tunnel, &readfds);
+				interface_prepare = FD_ISSET(interface, &readfds);
+
+				do {
+					if (tunnel_prepare) {
+            			length = recvfrom(tunnel, packet, sizeof(packet), MSG_DONTWAIT, &from, &fromlen);
+
+						tunnel_prepare = 0;
+						if (length > 0) {
+							tunnel_prepare = 1;
+							if (length > LEN_PADDING + (int)sizeof(struct ipv4_info) && packet[LEN_PADDING]) {
+								int len = length - LEN_PADDING;
+								const unsigned char *adj = packet + LEN_PADDING;
+
+								if (is_same_network(adj, len)) {
+									/* route packet to other device. */
+									dispatch_packet(tunnel, adj, len, &from, fromlen);
+								} else {
+									/* dispatch to tun device. */
+									write(interface, adj, len);
+								}
+
+								lastup = time(NULL);
+								dirty = 1;
+							} else if (length > LEN_PADDING) {
+								int len = length - LEN_PADDING;
+								const unsigned char *adj = packet + LEN_PADDING;
+								packet[length] = 0;
+								handshake_packet(tunnel, adj, len, &from, fromlen);
+								lastup = time(NULL);
+								dirty = 1;
+							}
+						}
+					}
+
+					if (interface_prepare) {
+            			length = read(interface, packet, sizeof(packet));
+
+						interface_prepare = 0;
+						if (length > (int)sizeof(struct ipv4_info)) {
+							interface_prepare = 1;
+							dispatch_packet(tunnel, packet, length, NULL, 0);
+						}
+					}
+
+				} while (tunnel_prepare || interface_prepare);
+
+				continue;
+			}
+
+			if (dirty && lastup + 60 < time(NULL)) {
+				fprintf(stderr, "idle for long time, try to recreate interface\n");
+				break;
+			}
+		}
+
+		close(tunnel);
+
+	} while (true);
+
+	close(interface);
+
+#if 0
     while ((tunnel = get_tunnel(argv[2], argv[3])) != -1) {
         printf("%s: Here comes a new tunnel\n", argv[1]);
 
@@ -303,4 +609,7 @@ int main(int argc, char **argv)
     }
     perror("Cannot create tunnels");
     exit(1);
+#endif
+
+	return 0;
 }
