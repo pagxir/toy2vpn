@@ -129,6 +129,14 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         }
     }
 
+    private static final byte[] DNS_PADDING = {
+            0x20, (byte)0x88, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x01, 0x77, 0x00, 0x00,
+            0x01, 0x00, 0x01
+    };
+
+    private static final int LEN_PADDING = DNS_PADDING.length;
+
     private boolean run(InetSocketAddress server) throws Exception {
         DatagramChannel tunnel = null;
         boolean connected = false;
@@ -175,10 +183,13 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                 boolean idle = true;
 
                 // Read the outgoing packet from the input stream.
-                int length = in.read(packet.array());
+                int length = in.read(packet.array(), LEN_PADDING, packet.array().length - LEN_PADDING);
                 if (length > 0) {
                     // Write the outgoing packet to the tunnel.
-                    packet.limit(length);
+		    packet.position(0);
+		    packet.put(DNS_PADDING);
+		    packet.position(0);
+                    packet.limit(length + LEN_PADDING);
                     tunnel.write(packet);
                     packet.clear();
 
@@ -193,11 +204,11 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
                 // Read the incoming packet from the tunnel.
                 length = tunnel.read(packet);
-                if (length > 0) {
+                if (length > LEN_PADDING) {
                     // Ignore control messages, which start with zero.
-                    if (packet.get(0) != 0) {
+                    if (packet.get(LEN_PADDING) != 0) {
                         // Write the incoming packet to the output stream.
-                        out.write(packet.array(), 0, length);
+                        out.write(packet.array(), LEN_PADDING, length - LEN_PADDING);
                     }
                     packet.clear();
 
@@ -222,7 +233,8 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                     // We are receiving for a long time but not sending.
                     if (timer < -15000) {
                         // Send empty control messages.
-                        packet.put((byte) 0).limit(1);
+			packet.put(DNS_PADDING);
+                        packet.put((byte) 0).limit(1 + LEN_PADDING);
                         for (int i = 0; i < 3; ++i) {
                             packet.position(0);
                             tunnel.write(packet);
@@ -263,7 +275,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         ByteBuffer packet = ByteBuffer.allocate(1024);
 
         // Control messages always start with zero.
-        packet.put((byte) 0).put(mSharedSecret).flip();
+        packet.put(DNS_PADDING).put((byte) 0).put(mSharedSecret).flip();
 
         // Send the secret several times in case of packet loss.
         for (int i = 0; i < 3; ++i) {
@@ -278,8 +290,8 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
             // Normally we should not receive random packets.
             int length = tunnel.read(packet);
-            if (length > 0 && packet.get(0) == 0) {
-                configure(new String(packet.array(), 1, length - 1).trim());
+            if (length > LEN_PADDING && packet.get(LEN_PADDING) == 0) {
+                configure(new String(packet.array(), LEN_PADDING + 1, length - 1 - LEN_PADDING).trim());
                 return;
             }
         }

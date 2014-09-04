@@ -1,0 +1,10 @@
+
+android update project -p `pwd` -t android-14
+
+cat << EOF >> local.properties
+#key.store = /home/level/android-toolkit/android.keystore
+#key.store.password=xxxxxxxxxxxx
+#key.alias = level
+#key.alias.password=xxxxxxxxxxxx
+EOF
+

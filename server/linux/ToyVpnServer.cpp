@@ -81,6 +81,14 @@ static int get_interface(char *name)
 
 #endif
 
+static unsigned char DNS_PADDING[] = {
+	0x20, 0x88, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x01, 0x77, 0x00, 0x00,
+	0x01, 0x00, 0x01
+};
+
+#define LEN_PADDING sizeof(DNS_PADDING)
+
 static int get_tunnel(char *port, char *secret)
 {
     // We use an IPv6 socket to cover both IPv4 and IPv6.
@@ -96,6 +104,7 @@ static int get_tunnel(char *port, char *secret)
     addr.sin6_family = AF_INET6;
     addr.sin6_port = htons(atoi(port));
 
+    fprintf(stderr, "port %d\n", atoi(port));
     // Call bind(2) in a loop since Linux does not have SO_REUSEPORT.
     while (bind(tunnel, (sockaddr *)&addr, sizeof(addr))) {
         if (errno != EADDRINUSE) {
@@ -112,10 +121,12 @@ static int get_tunnel(char *port, char *secret)
         int n = recvfrom(tunnel, packet, sizeof(packet), 0,
                 (sockaddr *)&addr, &addrlen);
         if (n <= 0) {
+    	    fprintf(stderr, "connected packet length %d\n", n);
             return -1;
         }
         packet[n] = 0;
-    } while (packet[0] != 0 || strcmp(secret, &packet[1]));
+    	fprintf(stderr, "connected packet length %d\n", n);
+    } while (packet[LEN_PADDING] != 0 || strcmp(secret, &packet[LEN_PADDING + 1]));
 
     // Connect to the client as we only handle one client at a time.
     connect(tunnel, (sockaddr *)&addr, addrlen);
@@ -198,13 +209,17 @@ int main(int argc, char **argv)
         // Put the tunnel into non-blocking mode.
         fcntl(tunnel, F_SETFL, O_NONBLOCK);
 
-        // Send the parameters several times in case of packet loss.
-        for (int i = 0; i < 3; ++i) {
-            send(tunnel, parameters, sizeof(parameters), MSG_NOSIGNAL);
-        }
-
         // Allocate the buffer for a single packet.
         char packet[32767];
+
+	memcpy(packet, DNS_PADDING, LEN_PADDING);
+	memcpy(packet + LEN_PADDING, parameters, sizeof(parameters));
+        // Send the parameters several times in case of packet loss.
+        for (int i = 0; i < 3; ++i) {
+            send(tunnel, packet, sizeof(parameters) + LEN_PADDING, MSG_NOSIGNAL);
+        }
+        fprintf(stderr, "Here comes a new tunnel send config\n");
+
 
         // We use a timer to determine the status of the tunnel. It
         // works on both sides. A positive value means sending, and
@@ -217,10 +232,11 @@ int main(int argc, char **argv)
             bool idle = true;
 
             // Read the outgoing packet from the input stream.
-            int length = read(interface, packet, sizeof(packet));
+            int length = read(interface, packet + LEN_PADDING, sizeof(packet) - LEN_PADDING);
             if (length > 0) {
                 // Write the outgoing packet to the tunnel.
-                send(tunnel, packet, length, MSG_NOSIGNAL);
+		memcpy(packet, DNS_PADDING, LEN_PADDING);
+                send(tunnel, packet, length + LEN_PADDING, MSG_NOSIGNAL);
 
                 // There might be more outgoing packets.
                 idle = false;
@@ -236,11 +252,12 @@ int main(int argc, char **argv)
             if (length == 0) {
                 break;
             }
-            if (length > 0) {
+
+            if (length > (int)LEN_PADDING) {
                 // Ignore control messages, which start with zero.
-                if (packet[0] != 0) {
+                if (packet[LEN_PADDING] != 0) {
                     // Write the incoming packet to the output stream.
-                    write(interface, packet, length);
+                    write(interface, packet + LEN_PADDING, length - LEN_PADDING);
                 }
 
                 // There might be more incoming packets.
@@ -265,9 +282,10 @@ int main(int argc, char **argv)
                 // Can you figure out why we use a different value? :)
                 if (timer < -16000) {
                     // Send empty control messages.
-                    packet[0] = 0;
+                    packet[LEN_PADDING] = 0;
+		    memcpy(packet, DNS_PADDING, LEN_PADDING);
                     for (int i = 0; i < 3; ++i) {
-                        send(tunnel, packet, 1, MSG_NOSIGNAL);
+                        send(tunnel, packet, 1 + LEN_PADDING, MSG_NOSIGNAL);
                     }
 
                     // Switch to sending.
