@@ -62,19 +62,19 @@
 
 static int get_interface(char *name)
 {
-    int interface = open("/dev/net/tun", O_RDWR | O_NONBLOCK);
+	int interface = open("/dev/net/tun", O_RDWR | O_NONBLOCK);
 
-    ifreq ifr;
-    memset(&ifr, 0, sizeof(ifr));
-    ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
-    strncpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
+	ifreq ifr;
+	memset(&ifr, 0, sizeof(ifr));
+	ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
+	strncpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
 
-    if (ioctl(interface, TUNSETIFF, &ifr)) {
-        perror("Cannot get TUN interface");
-        exit(1);
-    }
+	if (ioctl(interface, TUNSETIFF, &ifr)) {
+		perror("Cannot get TUN interface");
+		exit(1);
+	}
 
-    return interface;
+	return interface;
 }
 
 #else
@@ -93,85 +93,96 @@ static unsigned char DNS_PADDING[] = {
 
 static int get_tunnel(char *port)
 {
-    // We use an IPv6 socket to cover both IPv4 and IPv6.
-    int tunnel = socket(AF_INET6, SOCK_DGRAM, 0);
-    int flag = 1;
-    setsockopt(tunnel, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
-    flag = 0;
-    setsockopt(tunnel, IPPROTO_IPV6, IPV6_V6ONLY, &flag, sizeof(flag));
+#if 0
+	// We use an IPv6 socket to cover both IPv4 and IPv6.
+	int tunnel = socket(AF_INET6, SOCK_DGRAM, 0);
+	int flag = 1;
+	setsockopt(tunnel, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
+	flag = 0;
+	setsockopt(tunnel, IPPROTO_IPV6, IPV6_V6ONLY, &flag, sizeof(flag));
 
-    // Accept packets received on any local address.
-    sockaddr_in6 addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin6_family = AF_INET6;
-    addr.sin6_port = htons(atoi(port));
+	// Accept packets received on any local address.
+	sockaddr_in6 addr;
+	memset(&addr, 0, sizeof(addr));
+	addr.sin6_family = AF_INET6;
+	addr.sin6_port = htons(atoi(port));
+#endif
 
-    fprintf(stderr, "port %d\n", atoi(port));
-    // Call bind(2) in a loop since Linux does not have SO_REUSEPORT.
-    while (bind(tunnel, (sockaddr *)&addr, sizeof(addr))) {
-        if (errno != EADDRINUSE) {
-            return -1;
-        }
-        usleep(100000);
-    }
+	// We use an IPv6 socket to cover both IPv4 and IPv6.
+	int tunnel = socket(AF_INET, SOCK_DGRAM, 0);
+
+	// Accept packets received on any local address.
+	sockaddr_in addr;
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(atoi(port));
+
+	fprintf(stderr, "port %d\n", atoi(port));
+	// Call bind(2) in a loop since Linux does not have SO_REUSEPORT.
+	while (bind(tunnel, (sockaddr *)&addr, sizeof(addr))) {
+		if (errno != EADDRINUSE) {
+			return -1;
+		}
+		usleep(100000);
+	}
 
 	return tunnel;
 
 #if 0
-    // Receive packets till the secret matches.
-    char packet[1024];
-    socklen_t addrlen;
-    do {
-        addrlen = sizeof(addr);
-        int n = recvfrom(tunnel, packet, sizeof(packet), 0,
-                (sockaddr *)&addr, &addrlen);
-        if (n <= 0) {
-    	    fprintf(stderr, "connected packet length %d\n", n);
-            return -1;
-        }
-        packet[n] = 0;
-    	fprintf(stderr, "connected packet length %d\n", n);
-    } while (packet[LEN_PADDING] != 0 || strcmp(secret, &packet[LEN_PADDING + 1]));
+	// Receive packets till the secret matches.
+	char packet[1024];
+	socklen_t addrlen;
+	do {
+		addrlen = sizeof(addr);
+		int n = recvfrom(tunnel, packet, sizeof(packet), 0,
+				(sockaddr *)&addr, &addrlen);
+		if (n <= 0) {
+			fprintf(stderr, "connected packet length %d\n", n);
+			return -1;
+		}
+		packet[n] = 0;
+		fprintf(stderr, "connected packet length %d\n", n);
+	} while (packet[LEN_PADDING] != 0 || strcmp(secret, &packet[LEN_PADDING + 1]));
 
-    // Connect to the client as we only handle one client at a time.
-    connect(tunnel, (sockaddr *)&addr, addrlen);
-    return tunnel;
+	// Connect to the client as we only handle one client at a time.
+	connect(tunnel, (sockaddr *)&addr, addrlen);
+	return tunnel;
 #endif
 }
 
 static void build_parameters(char *parameters, int size, int argc, char **argv)
 {
-    // Well, for simplicity, we just concatenate them (almost) blindly.
-    int offset = 0;
-    for (int i = 4; i < argc; ++i) {
-        char *parameter = argv[i];
-        int length = strlen(parameter);
-        char delimiter = ',';
+	// Well, for simplicity, we just concatenate them (almost) blindly.
+	int offset = 0;
+	for (int i = 4; i < argc; ++i) {
+		char *parameter = argv[i];
+		int length = strlen(parameter);
+		char delimiter = ',';
 
-        // If it looks like an option, prepend a space instead of a comma.
-        if (length == 2 && parameter[0] == '-') {
-            ++parameter;
-            --length;
-            delimiter = ' ';
-        }
+		// If it looks like an option, prepend a space instead of a comma.
+		if (length == 2 && parameter[0] == '-') {
+			++parameter;
+			--length;
+			delimiter = ' ';
+		}
 
-        // This is just a demo app, really.
-        if (offset + length >= size) {
-            puts("Parameters are too large");
-            exit(1);
-        }
+		// This is just a demo app, really.
+		if (offset + length >= size) {
+			puts("Parameters are too large");
+			exit(1);
+		}
 
-        // Append the delimiter and the parameter.
-        parameters[offset] = delimiter;
-        memcpy(&parameters[offset + 1], parameter, length);
-        offset += 1 + length;
-    }
+		// Append the delimiter and the parameter.
+		parameters[offset] = delimiter;
+		memcpy(&parameters[offset + 1], parameter, length);
+		offset += 1 + length;
+	}
 
-    // Fill the rest of the space with spaces.
-    memset(&parameters[offset], ' ', size - offset);
+	// Fill the rest of the space with spaces.
+	memset(&parameters[offset], ' ', size - offset);
 
-    // Control messages always start with zero.
-    parameters[0] = 0;
+	// Control messages always start with zero.
+	parameters[0] = 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -223,7 +234,7 @@ static int handshake_packet(int tunnel, const void *data, size_t len, struct soc
 	struct msghdr msg0;
 	struct iovec  iovecs[10];
 
-    char parameters[1024];
+	char parameters[1024];
 
 	handinfo = (const char *)data;
 
@@ -249,6 +260,12 @@ static int handshake_packet(int tunnel, const void *data, size_t len, struct soc
 	for (int i = 2; i < 255; i++) {
 		cltinfo = &_ll_client_info[i];
 		if (0 == strcmp(cltinfo->cookies, cookies)) {
+			cookie0 = (*cookies != 0);
+			btrinfo = cltinfo;
+			break;
+		}
+
+		if (memcmp(&cltinfo->target, from, fromlen) == 0) {
 			btrinfo = cltinfo;
 			cookie0 = 1;
 			break;
@@ -277,7 +294,7 @@ static int handshake_packet(int tunnel, const void *data, size_t len, struct soc
 		int part2 = (int)(long)btrinfo;
 		sprintf(btrinfo->cookies, "%08x.%08x", part1, part2);
 
-		sprintf(ipv4, "10.2.0.%d", btrinfo - _ll_client_info);
+		sprintf(ipv4, "10.2.0.%d", (btrinfo - _ll_client_info) & 0xFF);
 		btrinfo->cltip.s_addr = inet_addr(ipv4);
 	}
 
@@ -292,13 +309,17 @@ static int handshake_packet(int tunnel, const void *data, size_t len, struct soc
 
 	msg0.msg_name = (void *)from;
 	msg0.msg_namelen = fromlen;
+	msg0.msg_iov  = iovecs;
+	msg0.msg_iovlen = 2;
 
 	count = _ll_argc;
 	char _vv_a[] = "-a";
 	char _vv_c[] = "-c";
+	char _vv_prefix[] = "24";
 
 	_ll_argv[count++] = _vv_a;
 	_ll_argv[count++] = inet_ntoa(btrinfo->cltip);
+	_ll_argv[count++] = _vv_prefix;
 	_ll_argv[count++] = _vv_c;
 	_ll_argv[count++] = btrinfo->cookies;
 
@@ -307,7 +328,11 @@ static int handshake_packet(int tunnel, const void *data, size_t len, struct soc
 	memcpy(&btrinfo->target, from, fromlen);
 
 	build_parameters(parameters, sizeof(parameters), count, _ll_argv);
+	fprintf(stderr, "build parm %s\n", parameters + 1);
 	count = sendmsg(tunnel, &msg0, MSG_NOSIGNAL);
+	count = sendmsg(tunnel, &msg0, MSG_NOSIGNAL);
+
+	fprintf(stderr, "sent %d %s\n", count, strerror(errno));
 	return 0;
 }
 
@@ -372,39 +397,39 @@ static int dispatch_packet(int tunnel, const void *data, size_t len, struct sock
 
 int main(int argc, char **argv)
 {
-    if (argc < 5) {
-        printf("Usage: %s <tunN> <port> <secret> options...\n"
-               "\n"
-               "Options:\n"
-               "  -m <MTU> for the maximum transmission unit\n"
-               "  -a <address/prefix-length> for the private address\n"
-               "  -r <address/prefix-length> for the forwarding route\n"
-               "  -d <address> for the domain name server\n"
-               "  -s <domain> for the search domain\n"
-               "\n"
-               "Note that TUN interface needs to be configured properly\n"
-               "BEFORE running this program. For more information, please\n"
-               "read the comments in the source code.\n\n", argv[0]);
-        exit(1);
-    }
+	if (argc < 5) {
+		printf("Usage: %s <tunN> <port> <secret> options...\n"
+				"\n"
+				"Options:\n"
+				"  -m <MTU> for the maximum transmission unit\n"
+				"  -a <address/prefix-length> for the private address\n"
+				"  -r <address/prefix-length> for the forwarding route\n"
+				"  -d <address> for the domain name server\n"
+				"  -s <domain> for the search domain\n"
+				"\n"
+				"Note that TUN interface needs to be configured properly\n"
+				"BEFORE running this program. For more information, please\n"
+				"read the comments in the source code.\n\n", argv[0]);
+		exit(1);
+	}
 
 	strcpy(_hi_secret, argv[3]);
 	memcpy(_ll_argv, argv, argc * sizeof(argv[0]));
 	_ll_argc = argc;
 
 #if 0
-    // Parse the arguments and set the parameters.
-    char parameters[1024];
-    build_parameters(parameters, sizeof(parameters), argc, argv);
+	// Parse the arguments and set the parameters.
+	char parameters[1024];
+	build_parameters(parameters, sizeof(parameters), argc, argv);
 #endif
 
-    // Wait for a tunnel.
-    int tunnel;
+	// Wait for a tunnel.
+	int tunnel;
 	int dirty = 0;
 	time_t lastup = time(NULL);
 
-    // Get TUN interface.
-    int interface = get_interface(argv[1]);
+	// Get TUN interface.
+	int interface = get_interface(argv[1]);
 
 	do {
 		int maxfd;
@@ -416,7 +441,7 @@ int main(int argc, char **argv)
 		lastup = time(NULL);
 		tunnel = get_tunnel(argv[2]);
 
-		maxfd = (tunnel < interface? tunnel: interface);
+		maxfd = (tunnel > interface? tunnel: interface);
 		for (; ; ) {
 			FD_ZERO(&readfds);
 			FD_SET(tunnel, &readfds);
@@ -445,7 +470,7 @@ int main(int argc, char **argv)
 
 				do {
 					if (tunnel_prepare) {
-            			length = recvfrom(tunnel, packet, sizeof(packet), MSG_DONTWAIT, &from, &fromlen);
+						length = recvfrom(tunnel, packet, sizeof(packet), MSG_DONTWAIT, &from, &fromlen);
 
 						tunnel_prepare = 0;
 						if (length > 0) {
@@ -467,6 +492,7 @@ int main(int argc, char **argv)
 							} else if (length > LEN_PADDING) {
 								int len = length - LEN_PADDING;
 								const unsigned char *adj = packet + LEN_PADDING;
+								fprintf(stderr, "recvfrom %d %d %d\n", length, fromlen, from.sa_family);
 								packet[length] = 0;
 								handshake_packet(tunnel, adj, len, &from, fromlen);
 								lastup = time(NULL);
@@ -476,7 +502,7 @@ int main(int argc, char **argv)
 					}
 
 					if (interface_prepare) {
-            			length = read(interface, packet, sizeof(packet));
+						length = read(interface, packet, sizeof(packet));
 
 						interface_prepare = 0;
 						if (length > (int)sizeof(struct ipv4_info)) {
@@ -503,112 +529,112 @@ int main(int argc, char **argv)
 	close(interface);
 
 #if 0
-    while ((tunnel = get_tunnel(argv[2], argv[3])) != -1) {
-        printf("%s: Here comes a new tunnel\n", argv[1]);
+	while ((tunnel = get_tunnel(argv[2], argv[3])) != -1) {
+		printf("%s: Here comes a new tunnel\n", argv[1]);
 
-        // On UN*X, there are many ways to deal with multiple file
-        // descriptors, such as poll(2), select(2), epoll(7) on Linux,
-        // kqueue(2) on FreeBSD, pthread(3), or even fork(2). Here we
-        // mimic everything from the client, so their source code can
-        // be easily compared side by side.
+		// On UN*X, there are many ways to deal with multiple file
+		// descriptors, such as poll(2), select(2), epoll(7) on Linux,
+		// kqueue(2) on FreeBSD, pthread(3), or even fork(2). Here we
+		// mimic everything from the client, so their source code can
+		// be easily compared side by side.
 
-        // Put the tunnel into non-blocking mode.
-        fcntl(tunnel, F_SETFL, O_NONBLOCK);
+		// Put the tunnel into non-blocking mode.
+		fcntl(tunnel, F_SETFL, O_NONBLOCK);
 
-        // Allocate the buffer for a single packet.
-        char packet[32767];
+		// Allocate the buffer for a single packet.
+		char packet[32767];
 
-	memcpy(packet, DNS_PADDING, LEN_PADDING);
-	memcpy(packet + LEN_PADDING, parameters, sizeof(parameters));
-        // Send the parameters several times in case of packet loss.
-        for (int i = 0; i < 3; ++i) {
-            send(tunnel, packet, sizeof(parameters) + LEN_PADDING, MSG_NOSIGNAL);
-        }
-        fprintf(stderr, "Here comes a new tunnel send config\n");
-
-
-        // We use a timer to determine the status of the tunnel. It
-        // works on both sides. A positive value means sending, and
-        // any other means receiving. We start with receiving.
-        int timer = 0;
-
-        // We keep forwarding packets till something goes wrong.
-        while (true) {
-            // Assume that we did not make any progress in this iteration.
-            bool idle = true;
-
-            // Read the outgoing packet from the input stream.
-            int length = read(interface, packet + LEN_PADDING, sizeof(packet) - LEN_PADDING);
-            if (length > 0) {
-                // Write the outgoing packet to the tunnel.
 		memcpy(packet, DNS_PADDING, LEN_PADDING);
-                send(tunnel, packet, length + LEN_PADDING, MSG_NOSIGNAL);
+		memcpy(packet + LEN_PADDING, parameters, sizeof(parameters));
+		// Send the parameters several times in case of packet loss.
+		for (int i = 0; i < 3; ++i) {
+			send(tunnel, packet, sizeof(parameters) + LEN_PADDING, MSG_NOSIGNAL);
+		}
+		fprintf(stderr, "Here comes a new tunnel send config\n");
 
-                // There might be more outgoing packets.
-                idle = false;
 
-                // If we were receiving, switch to sending.
-                if (timer < 1) {
-                    timer = 1;
-                }
-            }
+		// We use a timer to determine the status of the tunnel. It
+		// works on both sides. A positive value means sending, and
+		// any other means receiving. We start with receiving.
+		int timer = 0;
 
-            // Read the incoming packet from the tunnel.
-            length = recv(tunnel, packet, sizeof(packet), 0);
-            if (length == 0) {
-                break;
-            }
+		// We keep forwarding packets till something goes wrong.
+		while (true) {
+			// Assume that we did not make any progress in this iteration.
+			bool idle = true;
 
-            if (length > (int)LEN_PADDING) {
-                // Ignore control messages, which start with zero.
-                if (packet[LEN_PADDING] != 0) {
-                    // Write the incoming packet to the output stream.
-                    write(interface, packet + LEN_PADDING, length - LEN_PADDING);
-                }
+			// Read the outgoing packet from the input stream.
+			int length = read(interface, packet + LEN_PADDING, sizeof(packet) - LEN_PADDING);
+			if (length > 0) {
+				// Write the outgoing packet to the tunnel.
+				memcpy(packet, DNS_PADDING, LEN_PADDING);
+				send(tunnel, packet, length + LEN_PADDING, MSG_NOSIGNAL);
 
-                // There might be more incoming packets.
-                idle = false;
+				// There might be more outgoing packets.
+				idle = false;
 
-                // If we were sending, switch to receiving.
-                if (timer > 0) {
-                    timer = 0;
-                }
-            }
+				// If we were receiving, switch to sending.
+				if (timer < 1) {
+					timer = 1;
+				}
+			}
 
-            // If we are idle or waiting for the network, sleep for a
-            // fraction of time to avoid busy looping.
-            if (idle) {
-                usleep(100000);
+			// Read the incoming packet from the tunnel.
+			length = recv(tunnel, packet, sizeof(packet), 0);
+			if (length == 0) {
+				break;
+			}
 
-                // Increase the timer. This is inaccurate but good enough,
-                // since everything is operated in non-blocking mode.
-                timer += (timer > 0) ? 100 : -100;
+			if (length > (int)LEN_PADDING) {
+				// Ignore control messages, which start with zero.
+				if (packet[LEN_PADDING] != 0) {
+					// Write the incoming packet to the output stream.
+					write(interface, packet + LEN_PADDING, length - LEN_PADDING);
+				}
 
-                // We are receiving for a long time but not sending.
-                // Can you figure out why we use a different value? :)
-                if (timer < -16000) {
-                    // Send empty control messages.
-                    packet[LEN_PADDING] = 0;
-		    memcpy(packet, DNS_PADDING, LEN_PADDING);
-                    for (int i = 0; i < 3; ++i) {
-                        send(tunnel, packet, 1 + LEN_PADDING, MSG_NOSIGNAL);
-                    }
+				// There might be more incoming packets.
+				idle = false;
 
-                    // Switch to sending.
-                    timer = 1;
-                }
+				// If we were sending, switch to receiving.
+				if (timer > 0) {
+					timer = 0;
+				}
+			}
 
-                // We are sending for a long time but not receiving.
-                if (timer > 20000) {
-                    break;
-                }
-            }
-        }
-        printf("%s: The tunnel is broken\n", argv[1]);
-        close(tunnel);
-    }
-    perror("Cannot create tunnels");
-    exit(1);
+			// If we are idle or waiting for the network, sleep for a
+			// fraction of time to avoid busy looping.
+			if (idle) {
+				usleep(100000);
+
+				// Increase the timer. This is inaccurate but good enough,
+				// since everything is operated in non-blocking mode.
+				timer += (timer > 0) ? 100 : -100;
+
+				// We are receiving for a long time but not sending.
+				// Can you figure out why we use a different value? :)
+				if (timer < -16000) {
+					// Send empty control messages.
+					packet[LEN_PADDING] = 0;
+					memcpy(packet, DNS_PADDING, LEN_PADDING);
+					for (int i = 0; i < 3; ++i) {
+						send(tunnel, packet, 1 + LEN_PADDING, MSG_NOSIGNAL);
+					}
+
+					// Switch to sending.
+					timer = 1;
+				}
+
+				// We are sending for a long time but not receiving.
+				if (timer > 20000) {
+					break;
+				}
+			}
+		}
+		printf("%s: The tunnel is broken\n", argv[1]);
+		close(tunnel);
+	}
+	perror("Cannot create tunnels");
+	exit(1);
 #endif
 
 	return 0;
