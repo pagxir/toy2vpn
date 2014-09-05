@@ -150,7 +150,7 @@ static int get_tunnel(char *port)
 #endif
 }
 
-static void build_parameters(char *parameters, int size, int argc, char **argv)
+static int build_parameters(char *parameters, int size, int argc, char **argv)
 {
 	// Well, for simplicity, we just concatenate them (almost) blindly.
 	int offset = 0;
@@ -183,13 +183,16 @@ static void build_parameters(char *parameters, int size, int argc, char **argv)
 
 	// Control messages always start with zero.
 	parameters[0] = 0;
+	parameters[offset++] = ' ';
+	parameters[offset++] = 0;
+	return offset;
 }
 
 //-----------------------------------------------------------------------------
 
 struct client_info {
 	int flags;
-	char cookies[16];
+	char cookies[32];
 
 	time_t lastup;
 	in_addr cltip;
@@ -215,6 +218,7 @@ static int is_same_network(const unsigned char *data, size_t len)
 	target = htonl(iphdr->target);
 
 	match0 = (source ^ target) & 0xFFFFFF00;
+	if ((target & 0xFF) == 1) return 0;
 	return (match0 == 0);
 }
 
@@ -247,7 +251,7 @@ static int handshake_packet(int tunnel, const void *data, size_t len, struct soc
 	}
 
 	cookies = "";
-	check = _hi_secret + 2 + strlen(_hi_secret);
+	check = handinfo + 2 + strlen(_hi_secret);
 	if ((int)(check - handinfo) < len && check[0] != 0) {
 		fprintf(stderr, "rehandshake cookie: %s\n", check);
 		cookies = check;
@@ -330,12 +334,12 @@ static int handshake_packet(int tunnel, const void *data, size_t len, struct soc
 	btrinfo->lastup = time(NULL);
 	memcpy(&btrinfo->target, from, fromlen);
 
-	build_parameters(parameters, sizeof(parameters), count, _ll_argv);
+	iovecs[1].iov_len = build_parameters(parameters, sizeof(parameters), count, _ll_argv);
 	fprintf(stderr, "build parm %s\n", parameters + 1);
 	count = sendmsg(tunnel, &msg0, MSG_NOSIGNAL);
+
 	count = sendmsg(tunnel, &msg0, MSG_NOSIGNAL);
 
-	fprintf(stderr, "sent %d %s\n", count, strerror(errno));
 	return 0;
 }
 
@@ -360,6 +364,11 @@ static int dispatch_packet(int tunnel, const void *data, size_t len, struct sock
 	target = htonl(iphdr->target);
 
 	index = (target & 0xFF);
+	if (index < 2 || index == 255) {
+		fprintf(stderr, "index is invalid: %d\n", index);
+		return 0;
+	}
+
 	cltinfo = &_ll_client_info[index];
 
 	if (from != NULL && fromlen >= sizeof(*from)) {
@@ -394,6 +403,18 @@ static int dispatch_packet(int tunnel, const void *data, size_t len, struct sock
 	iovecs[1].iov_base = (void *)data;
 
 	count = sendmsg(tunnel, &msg0, MSG_NOSIGNAL);
+	if (count == -1) {
+		struct sockaddr_in si, sd;
+		memcpy(&si, &cltinfo->target, sizeof(si));
+		fprintf(stderr, "invalid %d %s %d\n", count, strerror(errno), si.sin_family);
+		fprintf(stderr, "target: %s:%d\n", inet_ntoa(si.sin_addr), htons(si.sin_port));
+
+		si.sin_addr.s_addr = iphdr->target;
+		fprintf(stderr, "isource: %s %d\n", inet_ntoa(si.sin_addr), index);
+
+		si.sin_addr.s_addr = iphdr->source;
+		fprintf(stderr, "ifrom: %s %d\n", inet_ntoa(si.sin_addr), index);
+	}
 
 	return 0;
 }
