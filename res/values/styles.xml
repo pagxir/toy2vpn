@@ -22,4 +22,7 @@
         <item name="android:textAppearance">?android:attr/textAppearanceMedium</item>
         <item name="android:singleLine">true</item>
     </style>
+    <style name="ApnPreference">
+        <item name="android:layout">@layout/apn_preference_layout</item>
+    </style>
 </resources>

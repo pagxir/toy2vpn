@@ -21,12 +21,23 @@
 
     <uses-sdk android:minSdkVersion="14"/>
 
-    <application android:label="@string/app">
+    <application android:label="@string/app" >
 
         <activity android:name=".ToyVpnClient"
                 android:configChanges="orientation|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
+                <!--category android:name="android.intent.category.LAUNCHER"/-->
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".ToyVpnSettings"
+                android:label="@string/apn_settings"
+                android:theme="@style/Theme.Settings"
+                android:configChanges="orientation|keyboardHidden|screenSize"
+                android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
@@ -37,5 +48,6 @@
                 <action android:name="android.net.VpnService"/>
             </intent-filter>
         </service>
+
     </application>
 </manifest>
