@@ -249,6 +249,7 @@ static int handshake_packet(int tunnel, const void *data, size_t len, struct soc
 	cookies = "";
 	check = _hi_secret + 2 + strlen(_hi_secret);
 	if ((int)(check - handinfo) < len && check[0] != 0) {
+		fprintf(stderr, "rehandshake cookie: %s\n", check);
 		cookies = check;
 	}
 
@@ -296,6 +297,8 @@ static int handshake_packet(int tunnel, const void *data, size_t len, struct soc
 
 		sprintf(ipv4, "10.2.0.%d", (btrinfo - _ll_client_info) & 0xFF);
 		btrinfo->cltip.s_addr = inet_addr(ipv4);
+	} else {
+		fprintf(stderr, "rehandshake success: %s\n", inet_ntoa(btrinfo->cltip));
 	}
 
 	msg0.msg_flags = 0;
@@ -364,7 +367,7 @@ static int dispatch_packet(int tunnel, const void *data, size_t len, struct sock
 		struct client_info *srcinfo = &_ll_client_info[chk_index];
 
 		if (memcmp(from, &srcinfo->target, fromlen)) {
-			char reject[] = ".REJECT";
+			char reject[] = ".#REJECT";
 
 			msg0.msg_name = (void *)from;
 			msg0.msg_namelen = fromlen;

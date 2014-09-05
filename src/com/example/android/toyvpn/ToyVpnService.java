@@ -209,7 +209,9 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                     if (packet.get(LEN_PADDING) != 0) {
                         // Write the incoming packet to the output stream.
                         out.write(packet.array(), LEN_PADDING, length - LEN_PADDING);
-                    }
+                    } else if (packet.get(LEN_PADDING + 1) == '#') {
+                        throw new IllegalStateException("Timed out");
+		    }
                     packet.clear();
 
                     // There might be more incoming packets.
@@ -265,6 +267,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         return connected;
     }
 
+    String mCookies = "";
     private void handshake(DatagramChannel tunnel) throws Exception {
         // To build a secured tunnel, we should perform mutual authentication
         // and exchange session keys for encryption. To keep things simple in
@@ -275,7 +278,9 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         ByteBuffer packet = ByteBuffer.allocate(1024);
 
         // Control messages always start with zero.
-        packet.put(DNS_PADDING).put((byte) 0).put(mSharedSecret).flip();
+	packet.put(DNS_PADDING).put((byte) 0)
+		.put(mSharedSecret).put((byte)0)
+		.put(mCookies.getBytes()).flip();
 
         // Send the secret several times in case of packet loss.
         for (int i = 0; i < 3; ++i) {
@@ -326,6 +331,9 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                     case 's':
                         builder.addSearchDomain(fields[1]);
                         break;
+                    case 'c':
+			mCookies = fields[1];
+			break;
                 }
             } catch (Exception e) {
                 throw new IllegalArgumentException("Bad parameter: " + parameter);
