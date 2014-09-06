@@ -66,7 +66,7 @@ public class ToyVpnSettings extends PreferenceActivity
 		"9zai.net,108.61.209.94,53,9zai.net",
 		"crissic,107.150.1.51,53,crissic",
 		"klmva,104.143.37.118,53,klmva",
-		"bandwagon,104.128.80.141,bandwagon"
+		"bandwagon,104.128.80.141,53,bandwagon"
 	};
 
         for (String item: items) {
@@ -115,6 +115,7 @@ public class ToyVpnSettings extends PreferenceActivity
 			    .putExtra(prefix + ".PORT", parts[2])
 			    .putExtra(prefix + ".SECRET", parts[3]);
 		    startService(intent);
+		    Log.d("ToyVPN", "onActivityResult " + selectKey);
 	    }
         }
     }

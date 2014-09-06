@@ -64,6 +64,10 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         mServerPort = intent.getStringExtra(prefix + ".PORT");
         mSharedSecret = intent.getStringExtra(prefix + ".SECRET").getBytes();
 
+        Log.i(TAG, "config address " + mServerAddress);
+        Log.i(TAG, "config port " + mServerPort);
+        Log.i(TAG, "config secret " + mSharedSecret);
+
         // Start a new session by creating a new thread.
         mThread = new Thread(this, "ToyVpnThread");
         mThread.start();
@@ -138,8 +142,9 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
     private static final int LEN_PADDING = DNS_PADDING.length;
 
     private boolean run(InetSocketAddress server) throws Exception {
-        DatagramChannel tunnel = null;
         boolean connected = false;
+        DatagramChannel tunnel = null;
+
         try {
             // Create a DatagramChannel as the VPN tunnel.
             tunnel = DatagramChannel.open();
@@ -226,7 +231,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                 // If we are idle or waiting for the network, sleep for a
                 // fraction of time to avoid busy looping.
                 if (idle) {
-                    Thread.sleep(100);
+                    Thread.sleep(50);
 
                     // Increase the timer. This is inaccurate but good enough,
                     // since everything is operated in non-blocking mode.
