@@ -172,6 +172,7 @@ struct client_info {
 	int flags;
 	char cookies[32];
 
+	int session;
 	time_t lastup;
 	in_addr cltip;
 	struct sockaddr target;
@@ -280,6 +281,7 @@ static int handshake_packet(int tunnel, const void *data, size_t len, struct soc
 		sprintf(ipv4, "10.2.0.%d", (btrinfo - _ll_client_info) & 0xFF);
 		btrinfo->cltip.s_addr = inet_addr(ipv4);
 	} else {
+		btrinfo->session = random();
 		fprintf(stderr, "rehandshake success: %s\n", inet_ntoa(btrinfo->cltip));
 	}
 
@@ -300,13 +302,18 @@ static int handshake_packet(int tunnel, const void *data, size_t len, struct soc
 	count = _ll_argc;
 	char _vv_a[] = "-a";
 	char _vv_c[] = "-c";
+	char _vv_k[] = "-@";
 	char _vv_prefix[] = "24";
+	char _vv_session[32] = "24";
 
 	_ll_argv[count++] = _vv_a;
 	_ll_argv[count++] = inet_ntoa(btrinfo->cltip);
 	_ll_argv[count++] = _vv_prefix;
 	_ll_argv[count++] = _vv_c;
 	_ll_argv[count++] = btrinfo->cookies;
+	sprintf(_vv_session, "%x", btrinfo->session);
+	_ll_argv[count++] = _vv_k;
+	_ll_argv[count++] = _vv_session;
 
 	btrinfo->flags = 1;
 	btrinfo->lastup = time(NULL);
@@ -354,15 +361,16 @@ static int dispatch_packet(int tunnel, const void *data, size_t len, struct sock
 		struct client_info *srcinfo = &_ll_client_info[chk_index];
 
 		if (memcmp(from, &srcinfo->target, fromlen)) {
-			char reject[] = ".#REJECT";
+			char reject[108] = ".#REJECT";
 
+			sprintf(reject, ".#REJECT %x", srcinfo->session);
 			msg0.msg_name = (void *)from;
 			msg0.msg_namelen = fromlen;
 			msg0.msg_iov  = iovecs;
 			msg0.msg_iovlen = 2;
 
 			reject[0] = 0;
-			iovecs[1].iov_len = sizeof(reject);
+			iovecs[1].iov_len = strlen(reject);
 			iovecs[1].iov_base = reject;
 
 			count = sendmsg(tunnel, &msg0, MSG_NOSIGNAL);

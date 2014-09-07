@@ -28,9 +28,10 @@ import android.widget.Toast;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
+import java.net.InetSocketAddress;
 
 public class ToyVpnService extends VpnService implements Handler.Callback, Runnable {
     private static final String TAG = "ToyVpnService";
@@ -148,6 +149,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         try {
             // Create a DatagramChannel as the VPN tunnel.
             tunnel = DatagramChannel.open();
+            tunnel.socket().bind(new InetSocketAddress(5354));
 
             // Protect the tunnel before connecting to avoid loopback.
             if (!protect(tunnel.socket())) {
@@ -215,7 +217,10 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                         // Write the incoming packet to the output stream.
                         out.write(packet.array(), LEN_PADDING, length - LEN_PADDING);
                     } else if (packet.get(LEN_PADDING + 1) == '#') {
-                        throw new IllegalStateException("Timed out");
+                	String reject = new String(packet.array(), LEN_PADDING + 1, length - 1 - LEN_PADDING).trim();
+			String[] parts = reject.split(" ");
+			if (parts.length > 1 && mSessions.equals(parts[1]))
+				throw new IllegalStateException("Timed out");
 		    }
                     packet.clear();
 
@@ -273,6 +278,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
     }
 
     String mCookies = "";
+    String mSessions = "";
     private void handshake(DatagramChannel tunnel) throws Exception {
         // To build a secured tunnel, we should perform mutual authentication
         // and exchange session keys for encryption. To keep things simple in
@@ -300,7 +306,8 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
             // Normally we should not receive random packets.
             int length = tunnel.read(packet);
-            if (length > LEN_PADDING && packet.get(LEN_PADDING) == 0) {
+            if (length > LEN_PADDING + 1 && packet.get(LEN_PADDING) == 0
+		&& packet.get(LEN_PADDING + 1) != '#') {
                 configure(new String(packet.array(), LEN_PADDING + 1, length - 1 - LEN_PADDING).trim());
                 return;
             }
@@ -310,7 +317,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
     private void configure(String parameters) throws Exception {
         // If the old interface has exactly the same parameters, use it!
-        if (mInterface != null && parameters.equals(mParameters)) {
+        if (mInterface != null && parameters.replaceAll(" @.*$", "").equals(mParameters)) {
             Log.i(TAG, "Using the previous interface");
             return;
         }
@@ -339,6 +346,9 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                     case 'c':
 			mCookies = fields[1];
 			break;
+                    case '@':
+			mSessions = fields[1];
+			break;
                 }
             } catch (Exception e) {
                 throw new IllegalArgumentException("Bad parameter: " + parameter);
@@ -356,7 +366,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         mInterface = builder.setSession(mServerAddress)
                 .setConfigureIntent(mConfigureIntent)
                 .establish();
-        mParameters = parameters;
+        mParameters = parameters.replaceAll(" @.*$", "");
         Log.i(TAG, "New interface: " + parameters);
     }
 }
