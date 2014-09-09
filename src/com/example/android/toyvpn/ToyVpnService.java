@@ -134,10 +134,11 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         }
     }
 
-    private static final byte[] DNS_PADDING = {
+    private static byte[] DNS_PADDING = {
             0x20, (byte)0x88, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x01, 0x77, 0x00, 0x00,
-            0x01, 0x00, 0x01
+            0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00
     };
 
     private static final int LEN_PADDING = DNS_PADDING.length;
@@ -258,7 +259,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                     }
 
                     // We are sending for a long time but not receiving.
-                    if (timer > 20000) {
+                    if (timer > 600000) {
                         throw new IllegalStateException("Timed out");
                     }
                 }
@@ -289,6 +290,19 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         ByteBuffer packet = ByteBuffer.allocate(1024);
 
         // Control messages always start with zero.
+	int offset = LEN_PADDING - 8;
+	long threadId = Thread.currentThread().getId();
+
+        DNS_PADDING[offset++] = (byte)((threadId >> 0) & 0xff);
+        DNS_PADDING[offset++] = (byte)((threadId >> 8) & 0xff);
+        DNS_PADDING[offset++] = (byte)((threadId >> 16) & 0xff);
+        DNS_PADDING[offset++] = (byte)((threadId >> 24) & 0xff);
+
+        DNS_PADDING[offset++] = 0;
+        DNS_PADDING[offset++] = 0;
+        DNS_PADDING[offset++] = 0;
+        DNS_PADDING[offset++] = 0;
+
 	packet.put(DNS_PADDING).put((byte) 0)
 		.put(mSharedSecret).put((byte)0)
 		.put(mCookies.getBytes()).flip();
@@ -308,6 +322,14 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
             int length = tunnel.read(packet);
             if (length > LEN_PADDING + 1 && packet.get(LEN_PADDING) == 0
 		&& packet.get(LEN_PADDING + 1) != '#') {
+                offset = LEN_PADDING - 4;
+                DNS_PADDING[offset] = packet.get(offset);
+                offset++;
+                DNS_PADDING[offset] = packet.get(offset);
+                offset++;
+                DNS_PADDING[offset] = packet.get(offset);
+                offset++;
+                DNS_PADDING[offset] = packet.get(offset);
                 configure(new String(packet.array(), LEN_PADDING + 1, length - 1 - LEN_PADDING).trim());
                 return;
             }
