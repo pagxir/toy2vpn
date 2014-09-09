@@ -134,35 +134,20 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         }
     }
 
-    private static byte[] DNS_PADDING = {
-            0x20, (byte)0x88, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x01, 0x77, 0x00, 0x00,
-            0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00
-    };
-
-    private static final int LEN_PADDING = DNS_PADDING.length;
+    TunnelDevice tunnelDevice = new PingTunnelDevice();
 
     private boolean run(InetSocketAddress server) throws Exception {
         boolean connected = false;
-        DatagramChannel tunnel = null;
+        PingTunnel tunnel = null;
 
         try {
             // Create a DatagramChannel as the VPN tunnel.
-            tunnel = DatagramChannel.open();
-            tunnel.socket().bind(new InetSocketAddress(5354));
+            tunnel = PingTunnel.open();
 
             // Protect the tunnel before connecting to avoid loopback.
-            if (!protect(tunnel.socket())) {
+            if (!protect(tunnel.getFd())) {
                 throw new IllegalStateException("Cannot protect the tunnel");
             }
-
-            // Connect to the server.
-            tunnel.connect(server);
-
-            // For simplicity, we use the same thread for both reading and
-            // writing. Here we put the tunnel into non-blocking mode.
-            tunnel.configureBlocking(false);
 
             // Authenticate and configure the virtual network interface.
             handshake(tunnel);
@@ -171,99 +156,8 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
             connected = true;
             mHandler.sendEmptyMessage(R.string.connected);
 
-            // Packets to be sent are queued in this input stream.
-            FileInputStream in = new FileInputStream(mInterface.getFileDescriptor());
+            tunnelDevice.doLoop(tunnel.getFd(), mInterface.getFd());
 
-            // Packets received need to be written to this output stream.
-            FileOutputStream out = new FileOutputStream(mInterface.getFileDescriptor());
-
-            // Allocate the buffer for a single packet.
-            ByteBuffer packet = ByteBuffer.allocate(32767);
-
-            // We use a timer to determine the status of the tunnel. It
-            // works on both sides. A positive value means sending, and
-            // any other means receiving. We start with receiving.
-            int timer = 0;
-
-            // We keep forwarding packets till something goes wrong.
-            while (true) {
-                // Assume that we did not make any progress in this iteration.
-                boolean idle = true;
-
-                // Read the outgoing packet from the input stream.
-                int length = in.read(packet.array(), LEN_PADDING, packet.array().length - LEN_PADDING);
-                if (length > 0) {
-                    // Write the outgoing packet to the tunnel.
-		    packet.position(0);
-		    packet.put(DNS_PADDING);
-		    packet.position(0);
-                    packet.limit(length + LEN_PADDING);
-                    tunnel.write(packet);
-                    packet.clear();
-
-                    // There might be more outgoing packets.
-                    idle = false;
-
-                    // If we were receiving, switch to sending.
-                    if (timer < 1) {
-                        timer = 1;
-                    }
-                }
-
-                // Read the incoming packet from the tunnel.
-                length = tunnel.read(packet);
-                if (length > LEN_PADDING) {
-                    // Ignore control messages, which start with zero.
-                    if (packet.get(LEN_PADDING) != 0) {
-                        // Write the incoming packet to the output stream.
-                        out.write(packet.array(), LEN_PADDING, length - LEN_PADDING);
-                    } else if (packet.get(LEN_PADDING + 1) == '#') {
-                	String reject = new String(packet.array(), LEN_PADDING + 1, length - 1 - LEN_PADDING).trim();
-			String[] parts = reject.split(" ");
-			if (parts.length > 1 && mSessions.equals(parts[1]))
-				throw new IllegalStateException("Timed out");
-		    }
-                    packet.clear();
-
-                    // There might be more incoming packets.
-                    idle = false;
-
-                    // If we were sending, switch to receiving.
-                    if (timer > 0) {
-                        timer = 0;
-                    }
-                }
-
-                // If we are idle or waiting for the network, sleep for a
-                // fraction of time to avoid busy looping.
-                if (idle) {
-                    Thread.sleep(50);
-
-                    // Increase the timer. This is inaccurate but good enough,
-                    // since everything is operated in non-blocking mode.
-                    timer += (timer > 0) ? 100 : -100;
-
-                    // We are receiving for a long time but not sending.
-                    if (timer < -15000) {
-                        // Send empty control messages.
-			packet.put(DNS_PADDING);
-                        packet.put((byte) 0).limit(1 + LEN_PADDING);
-                        for (int i = 0; i < 3; ++i) {
-                            packet.position(0);
-                            tunnel.write(packet);
-                        }
-                        packet.clear();
-
-                        // Switch to sending.
-                        timer = 1;
-                    }
-
-                    // We are sending for a long time but not receiving.
-                    if (timer > 600000) {
-                        throw new IllegalStateException("Timed out");
-                    }
-                }
-            }
         } catch (InterruptedException e) {
             throw e;
         } catch (Exception e) {
@@ -275,65 +169,28 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                 // ignore
             }
         }
+
         return connected;
     }
 
-    String mCookies = "";
-    String mSessions = "";
-    private void handshake(DatagramChannel tunnel) throws Exception {
+    private void handshake(PingTunnel tunnel) throws Exception {
         // To build a secured tunnel, we should perform mutual authentication
         // and exchange session keys for encryption. To keep things simple in
         // this demo, we just send the shared secret in plaintext and wait
         // for the server to send the parameters.
 
-        // Allocate the buffer for handshaking.
-        ByteBuffer packet = ByteBuffer.allocate(1024);
-
-        // Control messages always start with zero.
-	int offset = LEN_PADDING - 8;
-	long threadId = Thread.currentThread().getId();
-
-        DNS_PADDING[offset++] = (byte)((threadId >> 0) & 0xff);
-        DNS_PADDING[offset++] = (byte)((threadId >> 8) & 0xff);
-        DNS_PADDING[offset++] = (byte)((threadId >> 16) & 0xff);
-        DNS_PADDING[offset++] = (byte)((threadId >> 24) & 0xff);
-
-        DNS_PADDING[offset++] = 0;
-        DNS_PADDING[offset++] = 0;
-        DNS_PADDING[offset++] = 0;
-        DNS_PADDING[offset++] = 0;
-
-	packet.put(DNS_PADDING).put((byte) 0)
-		.put(mSharedSecret).put((byte)0)
-		.put(mCookies.getBytes()).flip();
-
         // Send the secret several times in case of packet loss.
-        for (int i = 0; i < 3; ++i) {
-            packet.position(0);
-            tunnel.write(packet);
+        for (int i = 0; i < 2; ++i) {
+            tunnelDevice.doHandshake(tunnel.getFd());
         }
-        packet.clear();
 
-        // Wait for the parameters within a limited time.
-        for (int i = 0; i < 50; ++i) {
-            Thread.sleep(100);
+        byte[] data = tunnelDevice.getConfigure(tunnel.getFd());
 
-            // Normally we should not receive random packets.
-            int length = tunnel.read(packet);
-            if (length > LEN_PADDING + 1 && packet.get(LEN_PADDING) == 0
-		&& packet.get(LEN_PADDING + 1) != '#') {
-                offset = LEN_PADDING - 4;
-                DNS_PADDING[offset] = packet.get(offset);
-                offset++;
-                DNS_PADDING[offset] = packet.get(offset);
-                offset++;
-                DNS_PADDING[offset] = packet.get(offset);
-                offset++;
-                DNS_PADDING[offset] = packet.get(offset);
-                configure(new String(packet.array(), LEN_PADDING + 1, length - 1 - LEN_PADDING).trim());
-                return;
-            }
+        if (data != null) {
+            configure(new String(data));
+            return;
         }
+
         throw new IllegalStateException("Timed out");
     }
 
@@ -366,10 +223,10 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                         builder.addSearchDomain(fields[1]);
                         break;
                     case 'c':
-			mCookies = fields[1];
+			tunnelDevice.setCookies(fields[1]);
 			break;
                     case '@':
-			mSessions = fields[1];
+			tunnelDevice.setSession(fields[1]);
 			break;
                 }
             } catch (Exception e) {
