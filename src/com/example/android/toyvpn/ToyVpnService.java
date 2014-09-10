@@ -38,7 +38,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
     private String mServerAddress;
     private String mServerPort;
-    private byte[] mSharedSecret;
+    private String mSharedSecret;
     private PendingIntent mConfigureIntent;
 
     private Handler mHandler;
@@ -63,7 +63,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         String prefix = getPackageName();
         mServerAddress = intent.getStringExtra(prefix + ".ADDRESS");
         mServerPort = intent.getStringExtra(prefix + ".PORT");
-        mSharedSecret = intent.getStringExtra(prefix + ".SECRET").getBytes();
+        mSharedSecret = intent.getStringExtra(prefix + ".SECRET");
 
         Log.i(TAG, "config address " + mServerAddress);
         Log.i(TAG, "config port " + mServerPort);
@@ -120,6 +120,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
             Log.i(TAG, "Giving up");
         } catch (Exception e) {
             Log.e(TAG, "Got " + e.toString());
+			e.printStackTrace();
         } finally {
             try {
                 mInterface.close();
@@ -143,11 +144,18 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         try {
             // Create a DatagramChannel as the VPN tunnel.
             tunnel = PingTunnel.open();
+			if (tunnel == null) {
+            	mHandler.sendEmptyMessage(R.string.permission_deny);
+				return false;
+			}
 
             // Protect the tunnel before connecting to avoid loopback.
             if (!protect(tunnel.getFd())) {
                 throw new IllegalStateException("Cannot protect the tunnel");
             }
+
+        	tunnelDevice.setSecret(mSharedSecret);
+			tunnelDevice.setServer(server);
 
             // Authenticate and configure the virtual network interface.
             handshake(tunnel);
@@ -187,15 +195,18 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         byte[] data = tunnelDevice.getConfigure(tunnel.getFd());
 
         if (data != null) {
+            Log.e(TAG, "handshake " + data.length);
             configure(new String(data));
             return;
         }
 
+        Log.e(TAG, "timeout handshake");
         throw new IllegalStateException("Timed out");
     }
 
     private void configure(String parameters) throws Exception {
         // If the old interface has exactly the same parameters, use it!
+        Log.i(TAG, "Using the previous interface " + parameters);
         if (mInterface != null && parameters.replaceAll(" @.*$", "").equals(mParameters)) {
             Log.i(TAG, "Using the previous interface");
             return;
@@ -222,12 +233,12 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                     case 's':
                         builder.addSearchDomain(fields[1]);
                         break;
-                    case 'c':
-			tunnelDevice.setCookies(fields[1]);
-			break;
-                    case '@':
-			tunnelDevice.setSession(fields[1]);
-			break;
+					case 'c':
+						tunnelDevice.setCookies(fields[1]);
+						break;
+					case '@':
+						tunnelDevice.setSession(fields[1]);
+						break;
                 }
             } catch (Exception e) {
                 throw new IllegalArgumentException("Bad parameter: " + parameter);

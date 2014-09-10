@@ -26,5 +26,6 @@
     <string name="connecting">ToyVPN is connecting...</string>
     <string name="connected">ToyVPN is connected!</string>
     <string name="disconnected">ToyVPN is disconnected!</string>
-    <string name="apn_settings">ToyVPN Settings</string>
+    <string name="apn_settings">ToyVPN</string>
+    <string name="permission_deny">This device must be root, otherwise could not create ping socket</string>
 </resources>
