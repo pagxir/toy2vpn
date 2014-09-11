@@ -234,71 +234,71 @@ static int vpn_output(int tunnel, const void *data, size_t len)
 
 static int handshake_packet(int tunnel, const void *data, size_t len)
 {
-    int count;
-    char *pkt_ptr;
-    char pkt_msg[1200];
+	int count;
+	char *pkt_ptr;
+	char pkt_msg[1200];
 
-    if (len > 0 && data != NULL) {
-        pkt_ptr = (char *)data;
-        pkt_ptr++;
+	if (len > 0 && data != NULL) {
+		pkt_ptr = (char *)data;
+		pkt_ptr++;
 
-        if (*pkt_ptr != '#') {
-            fprintf(stderr, "from %s\n", pkt_ptr);
-            while (pkt_ptr != NULL && *pkt_ptr && *pkt_ptr != ' ') {
-                switch (*pkt_ptr) {
-                    case '@':
-                        sscanf(pkt_ptr + 2, "%s", _hi_rejected);
-                        fprintf(stderr, "rejected: %s\n", _hi_rejected);
+		if (*pkt_ptr != '#') {
+			fprintf(stderr, "from %s\n", pkt_ptr);
+			while (pkt_ptr != NULL && *pkt_ptr && *pkt_ptr != ' ') {
+				switch (*pkt_ptr) {
+					case '@':
+						sscanf(pkt_ptr + 2, "%s", _hi_rejected);
+						fprintf(stderr, "rejected: %s\n", _hi_rejected);
 
-                        sscanf(_hi_rejected, "%x", &_id_high);
-                        _id_low = getpid();
-                        break;
+						sscanf(_hi_rejected, "%x", &_id_high);
+						_id_low = getpid();
+						break;
 
-                    case 'c':
-                        sscanf(pkt_ptr + 2, "%s", _hi_cookies);
-                        fprintf(stderr, "cookies: %s\n", _hi_cookies);
-                        break;
+					case 'c':
+						sscanf(pkt_ptr + 2, "%s", _hi_cookies);
+						fprintf(stderr, "cookies: %s\n", _hi_cookies);
+						break;
 
-                    case 'm':
-                        break;
+					case 'm':
+						break;
 
-                    case 'd':
-                        break;
+					case 'd':
+						break;
 
-                    case 'a':
-                        break;
+					case 'a':
+						break;
 
-                    case 'r':
-                        break;
+					case 'r':
+						break;
 
-                    default:
-                        fprintf(stderr, "%c\n", *pkt_ptr);
-                        break;
-                }
+					default:
+						fprintf(stderr, "%c\n", *pkt_ptr);
+						break;
+				}
 
-                pkt_ptr = strchr(pkt_ptr, ' ');
-                if (pkt_ptr != NULL) pkt_ptr++;
-            }
+				pkt_ptr = strchr(pkt_ptr, ' ');
+				if (pkt_ptr != NULL) pkt_ptr++;
+			}
 
-            return 0;
-        } else {
-            int rejcode;
-            sscanf(pkt_ptr, "#REJECT %x", &rejcode);
-            if (rejcode != _id_high) return 0;
+			return 0;
+		} else {
+			int rejcode;
+			sscanf(pkt_ptr, "#REJECT %x", &rejcode);
+			if (rejcode != _id_high) return 0;
+		}
 	}
-    }
 
-    pkt_ptr  = pkt_msg;
-    count    = sprintf(pkt_ptr, ".%s%c%s", _hi_secret, 0, _hi_cookies);
-    fprintf(stderr, "handshake: %s / %s %d\n", pkt_msg, pkt_msg + strlen(pkt_msg) + 1, count);
-    pkt_msg[0] = 0;
+	pkt_ptr  = pkt_msg;
+	count    = sprintf(pkt_ptr, ".%s%c%s", _hi_secret, 0, _hi_cookies);
+	fprintf(stderr, "handshake: %s / %s %d\n", pkt_msg, pkt_msg + strlen(pkt_msg) + 1, count);
+	pkt_msg[0] = 0;
 
-    uint32_t save = _id_high;
-    _id_high = 0;
-    vpn_output(tunnel, pkt_msg, count);
-    vpn_output(tunnel, pkt_msg, count);
-    _id_high = save;
-    return 0;
+	uint32_t save = _id_high;
+	_id_high = 0;
+	vpn_output(tunnel, pkt_msg, count);
+	vpn_output(tunnel, pkt_msg, count);
+	_id_high = save;
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -554,11 +554,8 @@ int pingle_do_loop(int tunnel, int interface)
 
 					trak = (struct tracker_header *)&packet[sizeof(struct icmp_header)];
 					if (length > LEN_PADDING && packet[LEN_PADDING] == 0) {
-						int len = length - LEN_PADDING;
-						const unsigned char *adj = packet + LEN_PADDING;
 						fprintf(stderr, "recvfrom %d %d %d\n", length, fromlen, from.sa_family);
-						packet[length] = 0;
-						handshake_packet(tunnel, adj, len);
+						if (packet[LEN_PADDING + 1] == '#') return 0;
 						lastup = time(NULL);
 					} else if (length > LEN_PADDING + (int)sizeof(struct ipv4_header)) {
 						int len = length - LEN_PADDING;
