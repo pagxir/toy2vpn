@@ -1,4 +1,4 @@
-package com.example.android.toyvpn;
+package com.qifen.toyvpn;
 
 import android.app.Dialog;
 import android.app.ProgressDialog;
@@ -63,7 +63,7 @@ public class ToyVpnSettings extends PreferenceActivity
 
 	String[] items = new String[] {
 		"mianvps,103.242.8.53,53,mianvps",
-		"9zai.net,108.61.209.94,53,9zai.net",
+		"9zai.net,108.61.163.163,53,9zai",
 		"crissic,107.150.1.51,53,crissic",
 		"klmva,104.143.37.118,53,klmva",
 		"bandwagon,104.128.80.141,53,bandwagon"

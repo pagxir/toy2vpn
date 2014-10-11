@@ -1,4 +1,4 @@
-package com.example.android.toyvpn;
+package com.qifen.toyvpn;
 
 import android.content.ContentUris;
 import android.content.Context;

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.example.android.toyvpn;
+package com.qifen.toyvpn;
 
 import android.app.PendingIntent;
 import android.app.Service;

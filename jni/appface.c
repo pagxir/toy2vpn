@@ -9,7 +9,7 @@
 #define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 //定义目标类名称
-static const char *className = "com/example/android/toyvpn/PingTunnelDevice";
+static const char *className = "com/qifen/toyvpn/PingTunnelDevice";
 
 static int do_loop(JNIEnv *env, jclass clazz, jint tunnel, jint tunfd)
 {
