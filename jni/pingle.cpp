@@ -473,7 +473,7 @@ int pingle_get_configure(int tunnel, char *buf, size_t size)
 					packet[length] = 0;
 					if (len > size) len = size;
 					memcpy(buf, adj + 1, len - 1);
-					return len;
+					return strlen(buf);
 				}
 			}
 		}
