@@ -110,8 +110,19 @@ struct ipv4_header {
 };
 
 static sockaddr _sa_router;
-static unsigned char ICMP_PADDING[16]; // ICMP + TRACK
-#define LEN_PADDING sizeof(ICMP_PADDING)
+#ifndef USE_DNS_MODE
+static unsigned char TUNNEL_PADDIND[16]; // ICMP + TRACK
+#define LEN_PADDING sizeof(TUNNEL_PADDIND)
+#else
+static unsigned char TUNNEL_PADDIND[] = {
+    0x20, 0x88, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x01, 0x77, 0x00, 0x00,
+	0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00 /* the last 8 byte is use for id_low id_high */
+};
+#define LEN_PADDING sizeof(TUNNEL_PADDIND)
+#endif
+
 static int vpn_output(int tunnel, const void *data, size_t len);
 
 static int get_tunnel(char *port, char *server)
@@ -120,7 +131,11 @@ static int get_tunnel(char *port, char *server)
     sockaddr_in addr;
 
     // We use an IPv6 socket to cover both IPv4 and IPv6.
+#ifndef USE_DNS_MODE
     int tunnel = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
+#else
+    int tunnel = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+#endif
     assert(tunnel != -1);
 
     // Accept packets received on any local address.
@@ -202,7 +217,7 @@ static int vpn_output(int tunnel, const void *data, size_t len)
     msg0.msg_namelen = sizeof(_sa_router);
 
     iovecs[0].iov_len = LEN_PADDING;
-    iovecs[0].iov_base = ICMP_PADDING;
+    iovecs[0].iov_base = TUNNEL_PADDIND;
 
     iovecs[1].iov_len = len;
     iovecs[1].iov_base = (void *)data;
@@ -210,14 +225,17 @@ static int vpn_output(int tunnel, const void *data, size_t len)
     msg0.msg_iov  = iovecs;
     msg0.msg_iovlen = 2;
 
-    icmp1 = (struct icmp_header *)&ICMP_PADDING[0];
-    tracker1 = (struct tracker_header *)&ICMP_PADDING[8];
+    icmp1 = (struct icmp_header *)&TUNNEL_PADDIND[0];
+    tracker1 = (struct tracker_header *)&TUNNEL_PADDIND[LEN_PADDING];
+    tracker1--;
 
+#ifndef USE_DNS_MODE
     icmp1->type = 0x8;
     icmp1->code = 0x0;
     icmp1->checksum = 0;
     icmp1->id       = 0;
     icmp1->seq      = 0;
+#endif
     tracker1->id_low = _id_low;
     tracker1->id_high = _id_high;
 
@@ -375,7 +393,8 @@ int main(int argc, char **argv)
                             struct tracker_header *trak;
                             tunnel_prepare = 1;
 
-                            trak = (struct tracker_header *)&packet[sizeof(struct icmp_header)];
+                            trak = (struct tracker_header *)&packet[LEN_PADDING];
+                            trak--;
                             if (length > LEN_PADDING && packet[LEN_PADDING] == 0) {
                                 int len = length - LEN_PADDING;
                                 const unsigned char *adj = packet + LEN_PADDING;
@@ -466,7 +485,8 @@ int pingle_get_configure(int tunnel, char *buf, size_t size)
 			tunnel_prepare = 0;
 			if (length > 0) {
 				tunnel_prepare = 1;
-				trak = (struct tracker_header *)&packet[sizeof(struct icmp_header)];
+				trak = (struct tracker_header *)&packet[LEN_PADDING];
+				trak--;
 				if (length > LEN_PADDING && packet[LEN_PADDING] == 0 && packet[LEN_PADDING + 1]  != '#') {
 					int len = length - LEN_PADDING;
 					const unsigned char *adj = packet + LEN_PADDING;
@@ -552,7 +572,7 @@ int pingle_do_loop(int tunnel, int interface)
 				if (length > 0) {
 					tunnel_prepare = 1;
 
-					trak = (struct tracker_header *)&packet[sizeof(struct icmp_header)];
+					trak = (struct tracker_header *)&packet[LEN_PADDING];
 					if (length > LEN_PADDING && packet[LEN_PADDING] == 0) {
 						fprintf(stderr, "recvfrom %d %d %d\n", length, fromlen, from.sa_family);
 						if (packet[LEN_PADDING + 1] == '#') return 0;
@@ -611,7 +631,11 @@ int pingle_open(void)
     int tunnel;
 
     // We use an IPv6 socket to cover both IPv4 and IPv6.
+#ifndef USE_DNS_MODE
     tunnel = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
+#else
+    tunnel = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+#endif
 
     return tunnel;
 }

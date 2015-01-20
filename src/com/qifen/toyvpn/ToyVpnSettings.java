@@ -64,6 +64,7 @@ public class ToyVpnSettings extends PreferenceActivity
 		String[] items = new String[] {
 			"shifenwa,www.shifenwa.com,53,hello",
 			"relay,relay.shifenwa.com,53,hello",
+			"china,cn.shifenwa.com,53,hello",
 			"9zai,www.9zai.net,53,hello",
 			"sg,sg.9zai.net,53,hello",
 		};

@@ -35,6 +35,7 @@ import java.net.InetSocketAddress;
 
 import java.util.List;
 import java.util.LinkedList;
+import java.util.Iterator;
 
 public class ToyVpnService extends VpnService implements Handler.Callback, Runnable {
     private static final String TAG = "ToyVpnService";
@@ -49,6 +50,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
     private ParcelFileDescriptor mInterface;
     private String mParameters;
+    private boolean mStarted = false;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -59,7 +61,10 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
         // Stop the previous session by interrupting the thread.
         if (mThread != null) {
+            mStarted = false;
             mThread.interrupt();
+            try { mThread.join(); } catch (Exception e) {};
+            mThread = null;
         }
 
         // Extract information from the intent.
@@ -74,6 +79,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
         // Start a new session by creating a new thread.
         mThread = new Thread(this, "ToyVpnThread");
+        mStarted = true;
         mThread.start();
         return START_STICKY;
     }
@@ -81,7 +87,11 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
     @Override
     public void onDestroy() {
         if (mThread != null) {
+            mStarted = false;
             mThread.interrupt();
+            try { mThread.join(); } catch (Exception e) {};
+            mStarted = true;
+            mThread = null;
         }
     }
 
@@ -109,7 +119,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
             // is to work with ConnectivityManager, such as trying only when
             // the network is avaiable. Here we just use a counter to keep
             // things simple.
-            for (int attempt = 0; attempt < 10; ++attempt) {
+            for (int attempt = 0; mStarted && attempt < 10; ++attempt) {
                 mHandler.sendEmptyMessage(R.string.connecting);
 
                 // Reset the counter if we were connected.
@@ -118,7 +128,8 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                 }
 
                 // Sleep for a while. This also checks if we got interrupted.
-                Thread.sleep(3000);
+                if (mStarted)
+                    Thread.sleep(3000);
             }
             Log.i(TAG, "Giving up");
         } catch (Exception e) {
@@ -333,7 +344,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         String _include[] = {"0.0.0.0/1", "128.0.0.0/2", "192.0.0.0/3"};
         String _internal[] = {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"};
 
-        String _exclude[] = {"0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"};
+        String _exclude[] = {"0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24"};
 
         /* prebuilt: NONE INTERNAL EXTERNAL */
 
@@ -364,6 +375,22 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
             }
         }
 
+        for (Iterator<String> i = include.iterator(); i.hasNext(); ) {
+            String item = i.next();
+            String[] parts = item.split("/");
+            prefix = Integer.parseInt(parts[1]);
+            network = getNetworkCode(parts[0]);
+            includeNetwork(network, prefix);
+        }
+
+        for (Iterator<String> i = exclude.iterator(); i.hasNext(); ) {
+            String item = i.next();
+            String[] parts = item.split("/");
+            prefix = Integer.parseInt(parts[1]);
+            network = getNetworkCode(parts[0]);
+            excludeNetwork(network, prefix);
+        }
+
         for (int i = 0; i < _net_count; i++) {
 			String ipstr = "";
 			int p1, p2, p3, p4;
@@ -372,6 +399,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 			p3 = (_net_list[i] >> 8) & 0xff;
 			p4 = (_net_list[i] >> 0) & 0xff;
 			ipstr = String.valueOf(p1) + "." + String.valueOf(p2) + "." + String.valueOf(p3) + "." + String.valueOf(p4);
+			Log.i(TAG, "add route: " + ipstr + "/" + _net_pref[i]);
 			builder.addRoute(ipstr, _net_pref[i]);
         }
     }
@@ -458,5 +486,26 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                 .establish();
         mParameters = parameters.replaceAll(" @.*$", "");
         Log.i(TAG, "New interface: " + parameters);
+    }
+
+	public void onRevoke () {
+        Log.i(TAG, "onRevoke");
+
+        // Close the old interface since the parameters have been changed.
+        try {
+            mInterface.close();
+        } catch (Exception e) {
+            // ignore
+        }
+
+        if (mThread != null) {
+            mStarted = false;
+            mThread.interrupt();
+            try {
+                mThread.join();
+            } catch (Exception e) {};
+        }
+
+        stopSelf();
     }
 }
