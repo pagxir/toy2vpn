@@ -34,7 +34,8 @@ public class PingTunnel {
 		return true;
 	}
 
-	public static PingTunnel open() {
+	public static PingTunnel open(String mode) {
+		PingTunnelDevice.setDnsMode(mode);
 		int fd = PingTunnelDevice.do_open();
 
 		if (fd == -1 && enablePingTunnel()) {

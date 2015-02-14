@@ -1,6 +1,7 @@
 package com.qifen.toyvpn;
 
 import android.app.Dialog;
+import android.app.ActionBar;
 import android.app.ProgressDialog;
 import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
@@ -9,6 +10,7 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
@@ -22,56 +24,90 @@ import android.preference.PreferenceGroup;
 import android.preference.PreferenceScreen;
 import android.util.Log;
 import android.view.Menu;
+import android.view.Gravity;
 import android.net.VpnService;
 import android.view.MenuItem;
 import android.widget.Toast;
 import android.widget.Button;
+import android.widget.Switch;
 import android.widget.ListView;
+import android.widget.CompoundButton;
+import android.widget.CompoundButton.OnCheckedChangeListener;
 
 import java.util.ArrayList;
 
 public class ToyVpnSettings extends PreferenceActivity
-	implements Preference.OnPreferenceChangeListener, android.view.View.OnClickListener {
+	implements Preference.OnPreferenceChangeListener{
 
-    private Button mButton;
+	private static boolean isServiceOn = false;
+
+	private OnCheckedChangeListener mOnChecked = new OnCheckedChangeListener() {
+		public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+
+			if (isChecked) {
+				Intent intent = VpnService.prepare(ToyVpnSettings.this);
+
+				Log.d("ToyVPN", "onClick");
+				if (intent != null) {
+					startActivityForResult(intent, REQUEST_CONNECT_TOYVPN);
+				} else {
+					onActivityResult(REQUEST_CONNECT_TOYVPN, RESULT_OK, null);
+				}
+			}
+
+			return;
+		}
+	};
 
     @Override
     protected void onCreate(Bundle icicle) {
-        super.onCreate(icicle);
+		super.onCreate(icicle);
 
-        addPreferencesFromResource(R.xml.apn_settings);
+		addPreferencesFromResource(R.xml.apn_settings);
 
-	ListView listView = getListView();
+		ListView listView = getListView();
+		actionBarSwitch = (Switch)getLayoutInflater()
+			.inflate(R.layout.actionbar_top, null);
 
-	mButton = new Button(this);
-	mButton.setText(R.string.connect);
-	mButton.setOnClickListener(this);
+		ActionBar actionBar = getActionBar();
+		actionBar.setCustomView(actionBarSwitch);
+		actionBar.setDisplayOptions(ActionBar.DISPLAY_SHOW_HOME| ActionBar.DISPLAY_SHOW_CUSTOM);
+		actionBar.setCustomView(actionBarSwitch, new ActionBar.LayoutParams(
+					ActionBar.LayoutParams.WRAP_CONTENT,
+					ActionBar.LayoutParams.WRAP_CONTENT,
+					Gravity.CENTER_VERTICAL | Gravity.RIGHT));
+	}
 
-	listView.addFooterView(mButton);
-    }
+	Switch actionBarSwitch = null;
 
     @Override
     protected void onResume() {
-        super.onResume();
+		super.onResume();
 
-	fillList();
+		if (ToyVpnService.sState != 0) actionBarSwitch.setChecked(true);
+		actionBarSwitch.setOnCheckedChangeListener(mOnChecked);
+		fillList();
     }
+
+	static final String mSiteList = 
+		"Los Angeles(RAW):www.9zai.net:RAW,secret=hello|" +
+		"Los Angeles(UDP):www.9zai.net:UDP,port=53,secret=hello|" +
+		"Los Angeles(RAW):lax.shifenwa.com:RAW,secret=hello|" +
+		"Los Angeles(UDP):lax.shifenwa.com:UDP,port=53,secret=hello|" +
+		"tokyo(breakwall only, UDP):tokyo.shifenwa.com:UDP,port=503,secret=hello";
 
     private void fillList() {
         PreferenceGroup apnList = (PreferenceGroup) findPreference("apn_list");
         apnList.removeAll();
 
-		String[] items = new String[] {
-			"shifenwa,www.shifenwa.com,53,hello",
-			"relay,relay.shifenwa.com,53,hello",
-			"china,cn.shifenwa.com,53,hello",
-			"9zai,www.9zai.net,53,hello",
-			"sg,sg.9zai.net,53,hello",
-		};
+		SharedPreferences sp = getSharedPreferences("world_site_list", Context.MODE_PRIVATE);
+		String siteList = sp.getString("site_list", mSiteList);
+
+		String[] items = siteList.split("\\|");
 
         for (String item: items) {
             String key = item;
-            String[] parts = item.split(",");
+            String[] parts = item.split(":");
 
             String apn = parts[1];
             String name = parts[0];
@@ -91,37 +127,43 @@ public class ToyVpnSettings extends PreferenceActivity
     static final int REQUEST_CONNECT_TOYVPN = 0x9128;
 
     @Override
-    public void onClick(android.view.View v) {
-        Intent intent = VpnService.prepare(this);
-
-	Log.d("ToyVPN", "onClick");
-        if (intent != null) {
-            startActivityForResult(intent, REQUEST_CONNECT_TOYVPN);
-        } else {
-            onActivityResult(REQUEST_CONNECT_TOYVPN, RESULT_OK, null);
-        }
-    }
-
-    @Override
     protected void onActivityResult(int request, int result, Intent data) {
-        if (result == RESULT_OK && request == REQUEST_CONNECT_TOYVPN) {
-            String prefix = getPackageName();
-            String selectKey = ToyVpnPreference.mSelectedKey;
+		if (result == RESULT_OK && request == REQUEST_CONNECT_TOYVPN) {
+			String prefix = getPackageName();
+			String selectKey = ToyVpnPreference.mSelectedKey;
 
-	    if (selectKey != null && !selectKey.equals("")) {
-		    String[] parts = selectKey.split(",");
-		    Intent intent = new Intent(this, ToyVpnService.class)
-			    .putExtra(prefix + ".ADDRESS", parts[1])
-			    .putExtra(prefix + ".PORT", parts[2])
-			    .putExtra(prefix + ".SECRET", parts[3]);
-		    startService(intent);
-		    Log.d("ToyVPN", "onActivityResult " + selectKey);
-	    }
-        }
-    }
+			if (selectKey != null && !selectKey.equals("")) {
+				String[] parts = selectKey.split(":");
+				Intent intent = new Intent(this, ToyVpnService.class);
+				intent.putExtra(prefix + ".ADDRESS", parts[1]);
+
+				String[] args = parts[2].split(",");
+				for (String arg: args) {
+					if (arg.equals("UDP")) {
+						intent.putExtra(prefix + ".DNSMODE", "UDP");
+					} else if (arg.equals("RAW")) {
+						intent.putExtra(prefix + ".DNSMODE", "RAW");
+					} else {
+						String[] valpair = arg.split("=");
+						if (valpair.length >= 2) {
+							if (valpair[0].equals("port")) {
+								intent.putExtra(prefix + ".PORT", valpair[1]);
+							} else if (valpair[0].equals("secret")) {
+								intent.putExtra(prefix + ".SECRET", valpair[1]);
+							}
+						}
+					}
+				}
+
+				startService(intent);
+				Log.d("ToyVPN", "onActivityResult " + selectKey);
+			}
+		}
+	}
 
     @Override
     protected void onPause() {
+		actionBarSwitch.setOnCheckedChangeListener(null);
         super.onPause();
     }
 
@@ -157,8 +199,8 @@ public class ToyVpnSettings extends PreferenceActivity
     }
 
     public boolean onPreferenceChange(Preference preference, Object newValue) {
-	Log.d("ToyVPN", "onPreferenceChange");
-        return true;
-    }
+		Log.d("ToyVPN", "onPreferenceChange");
+		return true;
+	}
 }
 

@@ -23,6 +23,12 @@ static int do_handshake(JNIEnv *env, jclass clazz, jint tunnel)
     return 0;
 }
 
+static int set_dns_mode(JNIEnv *env, jclass clazz, jint tunnel)
+{
+	pingle_set_dnsmode(tunnel);
+    return 0;
+}
+
 static jbyteArray get_configure(JNIEnv *env, jclass clazz, jint tunnel)
 {
 	jbyte fill[2560];
@@ -96,6 +102,7 @@ static int do_open(JNIEnv *env, jclass clazz)
 static JNINativeMethod methods[] = {
 	{"do_loop", "(II)I", (void*)do_loop},
 	{"do_handshake", "(I)V", (void*)do_handshake},
+	{"set_dnsmode", "(I)V", (void*)set_dns_mode},
 	{"get_configure", "(I)[B", (void*)get_configure},
 	{"set_session", "(Ljava/lang/String;)V", (void*)set_session},
 	{"set_cookies", "(Ljava/lang/String;)V", (void*)set_cookies},

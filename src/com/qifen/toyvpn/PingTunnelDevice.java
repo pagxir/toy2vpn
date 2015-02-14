@@ -10,6 +10,7 @@ public class PingTunnelDevice implements TunnelDevice {
 	static native void set_cookies(String park);
 	static native void set_secret(String key);
 	static native void set_server(byte[] ipv4);
+	static native void set_dnsmode(int dnsmode);
 
 	static native int do_close(int fd);
 	static native int do_open();
@@ -36,6 +37,14 @@ public class PingTunnelDevice implements TunnelDevice {
 
 	public void setSecret(String key) {
 		set_secret(key);
+	}
+
+	static public void setDnsMode(String mode) {
+		if (mode.equals("udp") || mode.equals("UDP")) {
+			set_dnsmode(1);
+			return;
+		}
+		set_dnsmode(0);
 	}
 
 	public void setServer(InetSocketAddress target) {

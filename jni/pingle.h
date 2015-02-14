@@ -13,6 +13,7 @@ int pingle_set_server(const void *server, size_t len);
 
 int pingle_do_loop(int tunnel, int tunfd);
 int pingle_do_handshake(int tunnel);
+int pingle_set_dnsmode(int on);
 
 int pingle_open(void);
 

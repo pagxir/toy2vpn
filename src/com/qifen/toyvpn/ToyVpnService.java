@@ -40,35 +40,28 @@ import java.util.Iterator;
 public class ToyVpnService extends VpnService implements Handler.Callback, Runnable {
     private static final String TAG = "ToyVpnService";
 
+    private String mDnsMode;
     private String mServerAddress;
     private String mServerPort;
     private String mSharedSecret;
     private PendingIntent mConfigureIntent;
 
-    private Handler mHandler;
     private Thread mThread;
+    private Handler mHandler;
 
-    private ParcelFileDescriptor mInterface;
     private String mParameters;
     private boolean mStarted = false;
+    private ParcelFileDescriptor mInterface = null;
+
+	public static int sState = 0;
+
+	public boolean reConf = false;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // The handler is only used to show messages.
-        if (mHandler == null) {
-            mHandler = new Handler(this);
-        }
-
-        // Stop the previous session by interrupting the thread.
-        if (mThread != null) {
-            mStarted = false;
-            mThread.interrupt();
-            try { mThread.join(); } catch (Exception e) {};
-            mThread = null;
-        }
-
         // Extract information from the intent.
         String prefix = getPackageName();
+        mDnsMode = intent.getStringExtra(prefix + ".DNSMODE");
         mServerAddress = intent.getStringExtra(prefix + ".ADDRESS");
         mServerPort = intent.getStringExtra(prefix + ".PORT");
         mSharedSecret = intent.getStringExtra(prefix + ".SECRET");
@@ -76,11 +69,29 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         Log.i(TAG, "config address " + mServerAddress);
         Log.i(TAG, "config port " + mServerPort);
         Log.i(TAG, "config secret " + mSharedSecret);
+        Log.i(TAG, "config dnsmode " + mDnsMode);
+
+		if (sState == -1) {
+			reConf = true;
+			return START_STICKY;
+		}
+
+        if (mHandler == null) {
+            mHandler = new Handler(this);
+        }
+
+        if (mThread != null) {
+            mStarted = false;
+            mThread.interrupt();
+            try { mThread.join(); } catch (Exception e) {};
+            mThread = null;
+        }
 
         // Start a new session by creating a new thread.
         mThread = new Thread(this, "ToyVpnThread");
         mStarted = true;
         mThread.start();
+
         return START_STICKY;
     }
 
@@ -108,28 +119,18 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         try {
             Log.i(TAG, "Starting");
 
-            // If anything needs to be obtained using the network, get it now.
-            // This greatly reduces the complexity of seamless handover, which
-            // tries to recreate the tunnel without shutting down everything.
-            // In this demo, all we need to know is the server address.
-            InetSocketAddress server = new InetSocketAddress(
-                    mServerAddress, Integer.parseInt(mServerPort));
-
-            // We try to create the tunnel for several times. The better way
-            // is to work with ConnectivityManager, such as trying only when
-            // the network is avaiable. Here we just use a counter to keep
-            // things simple.
-            for (int attempt = 0; mStarted && attempt < 10; ++attempt) {
+            for (int attempt = 0; mStarted && attempt < 4; ++attempt) {
                 mHandler.sendEmptyMessage(R.string.connecting);
 
-                // Reset the counter if we were connected.
+				InetSocketAddress server = new InetSocketAddress(
+						mServerAddress, mServerPort==null? 0: Integer.parseInt(mServerPort));
+
                 if (run(server)) {
                     attempt = 0;
                 }
 
-                // Sleep for a while. This also checks if we got interrupted.
                 if (mStarted)
-                    Thread.sleep(3000);
+                    Thread.sleep(1000);
             }
             Log.i(TAG, "Giving up");
         } catch (Exception e) {
@@ -137,12 +138,14 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 			e.printStackTrace();
         } finally {
             try {
-                mInterface.close();
+                if (mInterface != null)
+					mInterface.close();
             } catch (Exception e) {
                 // ignore
             }
             mInterface = null;
             mParameters = null;
+			sState = 0;
 
             mHandler.sendEmptyMessage(R.string.disconnected);
             Log.i(TAG, "Exiting");
@@ -156,14 +159,12 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         PingTunnel tunnel = null;
 
         try {
-            // Create a DatagramChannel as the VPN tunnel.
-            tunnel = PingTunnel.open();
+            tunnel = PingTunnel.open(mDnsMode);
 			if (tunnel == null) {
             	mHandler.sendEmptyMessage(R.string.permission_deny);
 				return false;
 			}
 
-            // Protect the tunnel before connecting to avoid loopback.
             if (!protect(tunnel.getFd())) {
                 throw new IllegalStateException("Cannot protect the tunnel");
             }
@@ -171,14 +172,13 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         	tunnelDevice.setSecret(mSharedSecret);
 			tunnelDevice.setServer(server);
 
-            // Authenticate and configure the virtual network interface.
             handshake(tunnel);
 
-            // Now we are connected. Set the flag and show the message.
             connected = true;
             mHandler.sendEmptyMessage(R.string.connected);
-
-            tunnelDevice.doLoop(tunnel.getFd(), mInterface.getFd());
+			if (!reConf)
+				tunnelDevice.doLoop(tunnel.getFd(), mInterface.getFd());
+			reConf = false;
 
         } catch (InterruptedException e) {
             throw e;
@@ -197,12 +197,6 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
     }
 
     private void handshake(PingTunnel tunnel) throws Exception {
-        // To build a secured tunnel, we should perform mutual authentication
-        // and exchange session keys for encryption. To keep things simple in
-        // this demo, we just send the shared secret in plaintext and wait
-        // for the server to send the parameters.
-
-        // Send the secret several times in case of packet loss.
         for (int i = 0; i < 2; ++i) {
             tunnelDevice.doHandshake(tunnel.getFd());
         }
@@ -420,6 +414,11 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 		
         for (String parameter : parameters.split(" ")) {
             String[] fields = parameter.split(",");
+			if (fields.length < 1 || fields[0].length() < 1) {
+            	Log.i(TAG, "parse failure");
+                throw new IllegalArgumentException("Bad parameter: " + parameter);
+			}
+
             try {
                 switch (fields[0].charAt(0)) {
                     case 'm':
@@ -475,15 +474,20 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
         // Close the old interface since the parameters have been changed.
         try {
-            mInterface.close();
+        	Log.i(TAG, "Closing interface.");
+			if (mInterface != null) mInterface.close();
+        	Log.i(TAG, "Closed interface.");
         } catch (Exception e) {
+        	Log.i(TAG, "Closed interface.");
             // ignore
         }
 
+		sState = -1;
         // Create a new interface using the builder and save the parameters.
-        mInterface = builder.setSession(mServerAddress)
+        mInterface = builder.setSession(mServerAddress + ":" + mDnsMode)
                 .setConfigureIntent(mConfigureIntent)
                 .establish();
+		sState = 2;
         mParameters = parameters.replaceAll(" @.*$", "");
         Log.i(TAG, "New interface: " + parameters);
     }
@@ -493,7 +497,10 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
         // Close the old interface since the parameters have been changed.
         try {
-            mInterface.close();
+			if (mInterface != null) {
+            	mInterface.close();
+				mInterface = null;
+			}
         } catch (Exception e) {
             // ignore
         }
