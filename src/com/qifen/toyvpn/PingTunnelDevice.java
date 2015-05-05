@@ -9,7 +9,7 @@ public class PingTunnelDevice implements TunnelDevice {
 	static native void set_session(String park);
 	static native void set_cookies(String park);
 	static native void set_secret(String key);
-	static native void set_server(byte[] ipv4);
+	static native void set_server(byte[] ipv4, int port);
 	static native void set_dnsmode(int dnsmode);
 
 	static native int do_close(int fd);
@@ -48,7 +48,7 @@ public class PingTunnelDevice implements TunnelDevice {
 	}
 
 	public void setServer(InetSocketAddress target) {
-		set_server(target.getAddress().getAddress());
+		set_server(target.getAddress().getAddress(), target.getPort());
 	}
 
 	static {

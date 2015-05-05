@@ -66,6 +66,14 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         mServerPort = intent.getStringExtra(prefix + ".PORT");
         mSharedSecret = intent.getStringExtra(prefix + ".SECRET");
 
+		if (intent.getBooleanExtra("TEARDOWN", false) && mThread != null) {
+            mStarted = false;
+			if (runTunnel != null) runTunnel.close();
+            mThread.interrupt();
+            mThread = null;
+			return START_STICKY;
+		}
+
         Log.i(TAG, "config address " + mServerAddress);
         Log.i(TAG, "config port " + mServerPort);
         Log.i(TAG, "config secret " + mSharedSecret);
@@ -130,7 +138,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                 }
 
                 if (mStarted)
-                    Thread.sleep(1000);
+                    Thread.sleep(100);
             }
             Log.i(TAG, "Giving up");
         } catch (Exception e) {
@@ -152,6 +160,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         }
     }
 
+	PingTunnel runTunnel = null;
     TunnelDevice tunnelDevice = new PingTunnelDevice();
 
     private boolean run(InetSocketAddress server) throws Exception {
@@ -176,8 +185,11 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
             connected = true;
             mHandler.sendEmptyMessage(R.string.connected);
-			if (!reConf)
+			if (!reConf) {
+				runTunnel = tunnel;
 				tunnelDevice.doLoop(tunnel.getFd(), mInterface.getFd());
+				runTunnel = null;
+			}
 			reConf = false;
 
         } catch (InterruptedException e) {
@@ -338,7 +350,8 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         String _include[] = {"0.0.0.0/1", "128.0.0.0/2", "192.0.0.0/3"};
         String _internal[] = {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"};
 
-        String _exclude[] = {"0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24"};
+        //String _exclude[] = {"0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24"};
+        String _exclude[] = {"0.0.0.0/8", "127.0.0.0/8", "192.168.0.0/16", "169.254.0.0/16"};
 
         /* prebuilt: NONE INTERNAL EXTERNAL */
 

@@ -659,14 +659,14 @@ int pingle_open(void)
 	return tunnel;
 }
 
-int pingle_set_server(const void *server, size_t len)
+int pingle_set_server(const void *server, int port, size_t len)
 {
     int count;
     sockaddr_in addr;
 
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port   = htons(53);
+    addr.sin_port   = htons(port);
     memcpy(&addr.sin_addr, server, 4);
 
     memcpy(&_sa_router, &addr, sizeof(addr));

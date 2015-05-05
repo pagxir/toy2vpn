@@ -80,11 +80,11 @@ static int set_secret(JNIEnv *env, jclass clazz, jstring park)
 	return 0;
 }
 
-static int set_server(JNIEnv *env, jclass clazz, jbyteArray park)
+static int set_server(JNIEnv *env, jclass clazz, jbyteArray park, jint port)
 {
 	jsize  count = (*env)->GetArrayLength(env, park);  
 	jbyte* data  = (jbyte*)(*env)->GetByteArrayElements(env, park, 0);  
-	pingle_set_server(data, count);
+	pingle_set_server(data, port, count);
 	return 0;
 }
 
@@ -107,7 +107,7 @@ static JNINativeMethod methods[] = {
 	{"set_session", "(Ljava/lang/String;)V", (void*)set_session},
 	{"set_cookies", "(Ljava/lang/String;)V", (void*)set_cookies},
 	{"set_secret", "(Ljava/lang/String;)V", (void*)set_secret},
-	{"set_server", "([B)V", (void*)set_server},
+	{"set_server", "([BI)V", (void*)set_server},
 
 	{"do_close", "(I)I", (void*)do_close},
 	{"do_open", "()I", (void*)do_open},

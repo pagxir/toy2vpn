@@ -33,6 +33,7 @@
 
         <activity android:name=".ToyVpnSettings"
                 android:label="@string/apn_settings"
+                android:icon="@drawable/qifen"
                 android:theme="@style/Theme.Settings"
                 android:configChanges="orientation|keyboardHidden|screenSize"
                 android:launchMode="singleTask">

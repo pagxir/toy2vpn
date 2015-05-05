@@ -53,6 +53,10 @@ public class ToyVpnSettings extends PreferenceActivity
 				} else {
 					onActivityResult(REQUEST_CONNECT_TOYVPN, RESULT_OK, null);
 				}
+			} else {
+				Intent intent = new Intent(ToyVpnSettings.this, ToyVpnService.class);
+				intent.putExtra("TEARDOWN", true);
+				startService(intent);
 			}
 
 			return;
@@ -89,11 +93,20 @@ public class ToyVpnSettings extends PreferenceActivity
 		fillList();
     }
 
-	static final String mSiteList = 
+	static final String mSiteList0 = 
 		"Los Angeles(RAW):www.9zai.net:RAW,secret=hello|" +
 		"Los Angeles(UDP):www.9zai.net:UDP,port=53,secret=hello|" +
 		"Los Angeles(RAW):lax.shifenwa.com:RAW,secret=hello|" +
 		"Los Angeles(UDP):lax.shifenwa.com:UDP,port=53,secret=hello|" +
+		"newyear only(RAW):2015.shifenwa.com:RAW,secret=hello|" +
+		"tokyo node-1(UDP):tokyo1.shifenwa.com:UDP,port=53,secret=hello|" +
+		"tokyo(breakwall only, UDP):tokyo.shifenwa.com:UDP,port=503,secret=hello";
+	static final String mSiteList = 
+		"Los Angeles(RAW):lax.shifenwa.com:RAW,secret=hello|" +
+		"Los Angeles(UDP):lax.shifenwa.com:UDP,port=53,secret=hello|" +
+		"newyear only(RAW):2015.shifenwa.com:RAW,secret=hello|" +
+		"tokyo node-1(UDP):tokyo1.shifenwa.com:UDP,port=53,secret=hello|" +
+		"Los Angeles(Ad only):www.9zai.net:RAW,secret=hello0|" +
 		"tokyo(breakwall only, UDP):tokyo.shifenwa.com:UDP,port=503,secret=hello";
 
     private void fillList() {
@@ -101,7 +114,7 @@ public class ToyVpnSettings extends PreferenceActivity
         apnList.removeAll();
 
 		SharedPreferences sp = getSharedPreferences("world_site_list", Context.MODE_PRIVATE);
-		String siteList = sp.getString("site_list", mSiteList);
+		String siteList = sp.getString("site_list", mSiteList0);
 
 		String[] items = siteList.split("\\|");
 
