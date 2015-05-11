@@ -11,7 +11,7 @@ int pingle_set_session(const char *session);
 int pingle_set_secret(const char *secret);
 int pingle_set_server(const void *server, int port, size_t len);
 
-int pingle_do_loop(int tunnel, int tunfd);
+int pingle_do_loop(int tunnel, int udpfd, int tunfd);
 int pingle_do_handshake(int tunnel);
 int pingle_set_dnsmode(int on);
 

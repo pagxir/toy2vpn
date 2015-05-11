@@ -8,10 +8,12 @@ import java.io.DataOutputStream;
 
 public class PingTunnel {
 	private int mFd;
+	private int mUdpFd;
 	static final String TAG = "PingTunnel";
 
-	private PingTunnel(int fd) {
+	private PingTunnel(int fd, int udpfd) {
 		mFd = fd;
+		mUdpFd = udpfd;
 	}
 
 	static boolean enablePingTunnel() {
@@ -43,11 +45,17 @@ public class PingTunnel {
 		}
 
 		if (fd == -1) return null;
-		return new PingTunnel(fd);
+
+		int udpfd = PingTunnelDevice.do_open_udp();
+		return new PingTunnel(fd, udpfd);
 	}
 
 	public int getFd() {
 		return mFd;
+	}
+
+	public int getUdpFd() {
+		return mUdpFd;
 	}
 
 	public void close() {

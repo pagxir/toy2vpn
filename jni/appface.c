@@ -11,9 +11,9 @@
 //定义目标类名称
 static const char *className = "com/qifen/toyvpn/PingTunnelDevice";
 
-static int do_loop(JNIEnv *env, jclass clazz, jint tunnel, jint tunfd)
+static int do_loop(JNIEnv *env, jclass clazz, jint tunnel, jint udpfd, jint tunfd)
 {
-	pingle_do_loop(tunnel, tunfd);
+	pingle_do_loop(tunnel, udpfd, tunfd);
     return 0;
 }
 
@@ -69,6 +69,13 @@ static int set_cookies(JNIEnv *env, jclass clazz, jstring park)
 	return 0;
 }
 
+#include <sys/socket.h>
+static int do_open_udp(JNIEnv *env, jclass clazz)
+{
+	int tunnel = socket(AF_INET, SOCK_DGRAM, 0);
+	return tunnel;
+}
+
 static int set_secret(JNIEnv *env, jclass clazz, jstring park)
 {
 	const char *str;
@@ -100,7 +107,7 @@ static int do_open(JNIEnv *env, jclass clazz)
 
 //定义方法隐射关系
 static JNINativeMethod methods[] = {
-	{"do_loop", "(II)I", (void*)do_loop},
+	{"do_loop", "(III)I", (void*)do_loop},
 	{"do_handshake", "(I)V", (void*)do_handshake},
 	{"set_dnsmode", "(I)V", (void*)set_dns_mode},
 	{"get_configure", "(I)[B", (void*)get_configure},
@@ -110,6 +117,7 @@ static JNINativeMethod methods[] = {
 	{"set_server", "([BI)V", (void*)set_server},
 
 	{"do_close", "(I)I", (void*)do_close},
+	{"do_open_udp", "()I", (void*)do_open_udp},
 	{"do_open", "()I", (void*)do_open},
 };
 

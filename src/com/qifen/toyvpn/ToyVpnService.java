@@ -243,6 +243,10 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
                 throw new IllegalStateException("Cannot protect the tunnel");
             }
 
+            if (!protect(tunnel.getUdpFd())) {
+                throw new IllegalStateException("Cannot protect the tunnel");
+            }
+
         	tunnelDevice.setSecret(mSharedSecret);
 			tunnelDevice.setServer(server);
 
@@ -252,7 +256,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
             mHandler.sendEmptyMessage(R.string.connected);
 			if (!reConf) {
 				runTunnel = tunnel;
-				tunnelDevice.doLoop(tunnel.getFd(), mInterface.getFd());
+				tunnelDevice.doLoop(tunnel.getFd(), tunnel.getUdpFd(), mInterface.getFd());
 				runTunnel = null;
 			}
 			reConf = false;
