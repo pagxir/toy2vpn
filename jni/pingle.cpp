@@ -266,7 +266,7 @@ static int vpn_output(int tunnel, const void *data, size_t len)
         fprintf(stderr, "target: %s:%d\n", inet_ntoa(si0.sin_addr), htons(si0.sin_port));
     }
 
-    return 0;
+    return count;
 }
 
 static int handshake_packet(int tunnel, const void *data, size_t len)
@@ -613,7 +613,7 @@ int pingle_do_loop(int tunnel, int interface)
 
 				interface_prepare = 0;
 				if (length > (int)sizeof(struct ipv4_header)) {
-					vpn_output(tunnel, packet, length);
+					if (vpn_output(tunnel, packet, length) == -1) return 0;
 					interface_prepare = 1;
 				}
 			}

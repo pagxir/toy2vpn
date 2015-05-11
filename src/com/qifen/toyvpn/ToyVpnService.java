@@ -19,12 +19,18 @@ package com.qifen.toyvpn;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.BroadcastReceiver;
+import android.net.ConnectivityManager;
 import android.net.VpnService;
+import android.net.NetworkInfo;
 import android.os.Handler;
 import android.os.Message;
+import android.content.Context;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
 import android.widget.Toast;
+import android.content.IntentFilter;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -56,11 +62,45 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 	public static int sState = 0;
 
 	public boolean reConf = false;
+	public boolean isConnected = true;
+
+	public BroadcastReceiver mNetworkMonitor = new BroadcastReceiver() {
+		@Override   
+		public void onReceive(Context context, Intent intent) {   
+            int type;
+            ConnectivityManager manager;
+            manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);   
+            NetworkInfo info = manager.getActiveNetworkInfo();
+            if (info == null) {
+                Log.i(TAG, "Network State Change: no Active Network");
+                isConnected = false;
+                return;
+            }
+
+            type = info.getType();
+            if (type == ConnectivityManager.TYPE_WIFI ||
+                    type == ConnectivityManager.TYPE_MOBILE) {
+                Log.i(TAG, "NSType: " + type + "NState: " + info.getState());
+                synchronized(mNetworkMonitor) {
+                    isConnected = true;
+                    mNetworkMonitor.notifyAll();
+                }
+            }
+		}
+	};
+
+	@Override
+	public void onCreate( ) {
+		IntentFilter filter = new IntentFilter();
+		filter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
+		registerReceiver(mNetworkMonitor, filter);
+	}
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         // Extract information from the intent.
         String prefix = getPackageName();
+        if (intent == null) return 0;
         mDnsMode = intent.getStringExtra(prefix + ".DNSMODE");
         mServerAddress = intent.getStringExtra(prefix + ".ADDRESS");
         mServerPort = intent.getStringExtra(prefix + ".PORT");
@@ -105,6 +145,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
     @Override
     public void onDestroy() {
+        unregisterReceiver(mNetworkMonitor);
         if (mThread != null) {
             mStarted = false;
             mThread.interrupt();
@@ -126,20 +167,44 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
     public synchronized void run() {
         try {
             Log.i(TAG, "Starting");
+            ConnectivityManager manager;
+            int port = mServerPort == null? 0: Integer.parseInt(mServerPort);
+            InetSocketAddress server = new InetSocketAddress(mServerAddress, port);
 
-            for (int attempt = 0; mStarted && attempt < 4; ++attempt) {
+            for (int attempt = 0; mStarted && attempt < 14; ++attempt) {
                 mHandler.sendEmptyMessage(R.string.connecting);
-
-				InetSocketAddress server = new InetSocketAddress(
-						mServerAddress, mServerPort==null? 0: Integer.parseInt(mServerPort));
 
                 if (run(server)) {
                     attempt = 0;
                 }
 
-                if (mStarted)
+                synchronized(mNetworkMonitor) {
+                    if (attempt > 0) {
+                        manager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+                        NetworkInfo info = manager.getActiveNetworkInfo();
+                        if (isConnected && info == null) isConnected = false;
+                    }
+
+                    while (mStarted && !isConnected) {
+                        try {
+                            mNetworkMonitor.wait();
+                            break;
+                        } catch (InterruptedException e) {
+                            /* ignore */
+                        }
+                    }
+                }
+
+                if (!mStarted) {
+                    break;
+                }
+
+                if (attempt > 0 && mInterface == null) {
                     Thread.sleep(100);
+                    server = new InetSocketAddress(mServerAddress, port);
+                }
             }
+
             Log.i(TAG, "Giving up");
         } catch (Exception e) {
             Log.e(TAG, "Got " + e.toString());
@@ -406,7 +471,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 			p3 = (_net_list[i] >> 8) & 0xff;
 			p4 = (_net_list[i] >> 0) & 0xff;
 			ipstr = String.valueOf(p1) + "." + String.valueOf(p2) + "." + String.valueOf(p3) + "." + String.valueOf(p4);
-			Log.i(TAG, "add route: " + ipstr + "/" + _net_pref[i]);
+			Log.d(TAG, "add route: " + ipstr + "/" + _net_pref[i]);
 			builder.addRoute(ipstr, _net_pref[i]);
         }
     }
