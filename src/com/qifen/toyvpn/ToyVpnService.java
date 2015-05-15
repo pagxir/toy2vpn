@@ -26,8 +26,12 @@ import android.net.VpnService;
 import android.net.NetworkInfo;
 import android.os.Handler;
 import android.os.Message;
+import android.os.PowerManager;
+import android.net.TrafficStats;
+
 import android.content.Context;
 import android.os.ParcelFileDescriptor;
+import android.provider.Settings;
 import android.util.Log;
 import android.widget.Toast;
 import android.content.IntentFilter;
@@ -36,6 +40,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.channels.SocketChannel;
 import java.nio.channels.DatagramChannel;
 import java.net.InetSocketAddress;
 
@@ -60,32 +65,44 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
     private ParcelFileDescriptor mInterface = null;
 
 	public static int sState = 0;
+	static final int EVENT_SHOW_MESSAGE = 0x01;
+	static final int EVENT_DATA_STALL_AVOID = 0x02;
+	protected static final String INTENT_DATA_STALL_ALARM =
+		"com.android.internal.telephony.data-stall";
 
 	public boolean reConf = false;
 	public boolean isConnected = true;
+	public boolean isScreenOn  = false;
 
 	public BroadcastReceiver mNetworkMonitor = new BroadcastReceiver() {
 		@Override   
 		public void onReceive(Context context, Intent intent) {   
             int type;
             ConnectivityManager manager;
-            manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);   
-            NetworkInfo info = manager.getActiveNetworkInfo();
-            if (info == null) {
-                Log.i(TAG, "Network State Change: no Active Network");
-                isConnected = false;
-                return;
-            }
+			String action = intent.getAction();
 
-            type = info.getType();
-            if (type == ConnectivityManager.TYPE_WIFI ||
-                    type == ConnectivityManager.TYPE_MOBILE) {
-                Log.i(TAG, "NSType: " + type + "NState: " + info.getState());
-                synchronized(mNetworkMonitor) {
-                    isConnected = true;
-                    mNetworkMonitor.notifyAll();
-                }
-            }
+			if (action.equals(INTENT_DATA_STALL_ALARM)) {
+				Message msg = mHandler.obtainMessage(EVENT_DATA_STALL_AVOID, 0, 0);
+				mHandler.sendMessageDelayed(msg, 2000);
+			} else if (action.equals(ConnectivityManager.CONNECTIVITY_ACTION)) {
+				manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);   
+				NetworkInfo info = manager.getActiveNetworkInfo();
+				if (info == null) {
+					Log.i(TAG, "Network State Change: no Active Network");
+					isConnected = false;
+					return;
+				}
+
+				type = info.getType();
+				if (type == ConnectivityManager.TYPE_WIFI ||
+						type == ConnectivityManager.TYPE_MOBILE) {
+					Log.i(TAG, "NSType: " + type + "NState: " + info.getState());
+					synchronized(mNetworkMonitor) {
+						isConnected = true;
+						mNetworkMonitor.notifyAll();
+					}
+				}
+			}
 		}
 	};
 
@@ -93,6 +110,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 	public void onCreate( ) {
 		IntentFilter filter = new IntentFilter();
 		filter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
+		filter.addAction(INTENT_DATA_STALL_ALARM);
 		registerReceiver(mNetworkMonitor, filter);
 	}
 
@@ -157,11 +175,57 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 
     @Override
     public boolean handleMessage(Message message) {
-        if (message != null) {
-            Toast.makeText(this, message.what, Toast.LENGTH_SHORT).show();
+
+        switch (message.what) {
+            case EVENT_DATA_STALL_AVOID:
+                doDataStallAvoid(this);
+                break;
+
+            case EVENT_SHOW_MESSAGE:
+                Toast.makeText(this, message.arg2, Toast.LENGTH_SHORT).show();
+                break;
         }
+
         return true;
     }
+
+	public int getRecoveryAction() {
+		int action = Settings.System.getInt(this.getContentResolver(),
+				"radio.data.stall.recovery.action", 0);
+		Log.d(TAG, "getRecoveryAction: " + action);
+		return action;
+	}
+
+	private Runnable mDataStallAvoid = new Runnable() {
+		@Override
+		public void run() {
+			try {
+				SocketChannel socketChannel = SocketChannel.open();
+				socketChannel.configureBlocking(false);
+				if (!protect(socketChannel.socket())) throw new IllegalStateException("protect data stall tcp socket failure");
+				//socketChannel.connect(new InetSocketAddress("www.baidu.com", 80));
+				socketChannel.connect(new InetSocketAddress("115.239.210.25", 80));
+				socketChannel.close();
+			} catch (Exception e) {
+				Log.d(TAG, "doDataStallAvoid failure ");
+				e.printStackTrace();
+				throw new RuntimeException(e);
+			}
+			return;
+		}
+	};
+
+	private void doDataStallAvoid(Context context) {
+		ConnectivityManager manager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);   
+
+		if (getRecoveryAction() != 0 && sState == 2) {
+			NetworkInfo info = manager.getActiveNetworkInfo();
+			if (info != null && info.isConnected() &&
+				info.getType() == ConnectivityManager.TYPE_MOBILE) {
+				new Thread(mDataStallAvoid).start();
+			}
+		}
+	}
 
     @Override
     public synchronized void run() {
@@ -171,8 +235,9 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
             int port = mServerPort == null? 0: Integer.parseInt(mServerPort);
             InetSocketAddress server = new InetSocketAddress(mServerAddress, port);
 
-            for (int attempt = 0; mStarted && attempt < 14; ++attempt) {
-                mHandler.sendEmptyMessage(R.string.connecting);
+            for (int attempt = 0; mStarted && attempt < 4; ++attempt) {
+				Message msg = mHandler.obtainMessage(EVENT_SHOW_MESSAGE, 0x00, R.string.connecting);
+                mHandler.sendMessage(msg);
 
                 if (run(server)) {
                     attempt = 0;
@@ -220,7 +285,8 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
             mParameters = null;
 			sState = 0;
 
-            mHandler.sendEmptyMessage(R.string.disconnected);
+			Message msg = mHandler.obtainMessage(EVENT_SHOW_MESSAGE, 0x00, R.string.disconnected);
+			mHandler.sendMessage(msg);
             Log.i(TAG, "Exiting");
         }
     }
@@ -235,7 +301,8 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         try {
             tunnel = PingTunnel.open(mDnsMode);
 			if (tunnel == null) {
-            	mHandler.sendEmptyMessage(R.string.permission_deny);
+				Message msg = mHandler.obtainMessage(EVENT_SHOW_MESSAGE, 0x00, R.string.permission_deny);
+				mHandler.sendMessage(msg);
 				return false;
 			}
 
@@ -253,7 +320,8 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
             handshake(tunnel);
 
             connected = true;
-            mHandler.sendEmptyMessage(R.string.connected);
+			Message msg = mHandler.obtainMessage(EVENT_SHOW_MESSAGE, 0x00, R.string.connected);
+			mHandler.sendMessage(msg);
 			if (!reConf) {
 				runTunnel = tunnel;
 				tunnelDevice.doLoop(tunnel.getFd(), tunnel.getUdpFd(), mInterface.getFd());

@@ -361,11 +361,21 @@ static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, stru
 		to.to_flags |= TOF_DESTINATION;
 		to.to_dslen  = set_relay_info(_null_, 0x01, &info->t_peer, info->d_port);
 		to.to_dsaddr = _null_;
+
+		if (to.to_flags & TOF_SCALE) {
+			/* TODO: wscale will be not 7 */
+			info->t_wscale = to.to_wscale;
+		}
 	}
 
 	if (to.to_flags & TOF_TS) {
 		field->th_tsecr = htonl(to.to_tsecr);
 		field->th_tsval = htonl(to.to_tsval);
+	}
+
+	if (info->t_wscale != 7) {
+		/* convert windows scale from old to new */
+		field->th_win = (tcp->th_win << info->t_wscale) >> 7;
 	}
 
 	offup = tcpup_addoptions(&to, dst);

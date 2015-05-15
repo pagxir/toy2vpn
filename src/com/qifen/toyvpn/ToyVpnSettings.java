@@ -98,9 +98,8 @@ public class ToyVpnSettings extends PreferenceActivity
 		"Los Angeles(UDP):www.9zai.net:UDP,port=53,secret=hello|" +
 		"Los Angeles(RAW):lax.shifenwa.com:RAW,secret=hello|" +
 		"Los Angeles(UDP):lax.shifenwa.com:UDP,port=53,secret=hello|" +
-		"newyear only(RAW):2015.shifenwa.com:RAW,secret=hello|" +
-		"tokyo node-1(UDP):tokyo1.shifenwa.com:UDP,port=53,secret=hello|" +
-		"tokyo(breakwall only, UDP):tokyo.shifenwa.com:UDP,port=503,secret=hello";
+		"Backup Node(RAW):ali.shifenwa.com:RAW,secret=hello|" +
+		"Backup Node(UDP):ali.shifenwa.com:UDP,port=138,secret=hello";
 	static final String mSiteList = 
 		"Los Angeles(RAW):lax.shifenwa.com:RAW,secret=hello|" +
 		"Los Angeles(UDP):lax.shifenwa.com:UDP,port=53,secret=hello|" +
