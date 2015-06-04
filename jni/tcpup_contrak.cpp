@@ -307,6 +307,7 @@ static tcpup_info *tcpup_newcb(int src, int dst, u_short sport, u_short dport)
 	up->d_port = dport;
 	up->t_state = TCPS_CLOSED;
 	up->x_state = TCPS_CLOSED;
+	up->t_wscale = 7;
 	up->t_rcvtime = time(NULL);
 
 	up->next = _tcpup_info_header;
@@ -375,7 +376,8 @@ static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, stru
 
 	if (info->t_wscale != 7) {
 		/* convert windows scale from old to new */
-		field->th_win = (tcp->th_win << info->t_wscale) >> 7;
+		unsigned int win = htons(tcp->th_win) << info->t_wscale;
+		field->th_win = htons(win >> 7);
 	}
 
 	offup = tcpup_addoptions(&to, dst);
