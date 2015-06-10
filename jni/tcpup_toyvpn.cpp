@@ -200,7 +200,7 @@ static int get_tunnel(struct sockaddr_in *addrp)
 	return tunnel;
 }
 
-static int vpn_output(int tunnel, const void *data, size_t len)
+static int vpn_output(int tunnel, const void *data, size_t len, int xdat)
 {
 	int count;
 	struct msghdr msg0;
@@ -245,7 +245,7 @@ static int vpn_output(int tunnel, const void *data, size_t len)
 		icmp1->code = 0x0;
 		icmp1->checksum = 0;
 		icmp1->id       = 0x3456;
-		icmp1->seq      = 0x6543;
+		icmp1->seq      = xdat;
 	}
 
 	count = sendmsg(tunnel, &msg0, MSG_NOSIGNAL);
@@ -416,7 +416,7 @@ int main(int argc, char **argv)
 								} else if (len1 == -1) {
 									//fprintf(stderr, "write to tun length: %d\n", length);
 									len1 = tcpup_reset_fill(buf, adj, len);
-									vpn_output(tunnel, buf, len);
+									vpn_output(tunnel, buf, len, 0);
 								}
 
 								lastup = time(NULL);
@@ -446,16 +446,17 @@ int main(int argc, char **argv)
 					}
 
 					if (interface_prepare) {
+						int xdat = 0x0;
 						length = read(interface, packet, sizeof(packet));
 
 						interface_prepare = 0;
 						if (length > (int)sizeof(struct ipv4_header) &&
 							send_out_ip2udp(tunnel_udp, packet, length) == 0) {
 
-							length = translate_ip2up(buf, sizeof(buf), packet, length);
+							length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat);
 							if (length > 0) {
 								// fprintf(stderr, "send out packet: %d\n", length);
-								vpn_output(tunnel, buf, length);
+								vpn_output(tunnel, buf, length, xdat);
 							} else if (length == -1) {
 								int len = tcp_reset_fill(buf, packet, length);
 								fprintf(stderr, "send back reset packet: %d\n", len);
@@ -588,7 +589,7 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 						} else if (len1 == -1) {
 							//fprintf(stderr, "write to tun length: %d\n", length);
 							len1 = tcpup_reset_fill(buf, adj, len);
-							if (vpn_output(tunnel, buf, len) == -1) return 0;
+							if (vpn_output(tunnel, buf, len, 0) == -1) return 0;
 						}
 
 					}
@@ -620,12 +621,13 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 				interface_prepare = 0;
 				if (length > (int)sizeof(struct ipv4_header) &&
 						send_out_ip2udp(tunnel_udp, packet, length) == 0) {
+					int xdat = 0;
 					interface_prepare = 1;
 
-					length = translate_ip2up(buf, sizeof(buf), packet, length);
+					length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat);
 					if (length > 0) {
 						// fprintf(stderr, "send out packet: %d\n", length);
-						if (vpn_output(tunnel, buf, length) == -1) return 0;
+						if (vpn_output(tunnel, buf, length, xdat) == -1) return 0;
 					} else if (length == -1) {
 						int len = tcp_reset_fill(buf, packet, length);
 						fprintf(stderr, "send back reset packet: %d\n", len);

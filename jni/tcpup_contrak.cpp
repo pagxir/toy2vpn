@@ -15,14 +15,16 @@
 #include "tcpup/crypt.h"
 #include "tcpup/contrak.h"
 
-#define SEQ_GT(a,b)     ((int)((a)-(b)) > 0)
+#define SEQ_GEQ(a,b)     ((int)((a)-(b)) >= 0)
+#define SEQ_GT(a,b)      ((int)((a)-(b)) > 0)
 
 struct tcpup_info {
 	int t_conv;
+	int t_xdat;
 	int t_state;
 	int x_state;
 	int t_wscale; //linux default is 7
-	time_t t_rcvtime;
+	long t_rcvtime;
 
 	u_short s_port;
 	unsigned int t_from;
@@ -30,13 +32,17 @@ struct tcpup_info {
 	u_short d_port;
 	unsigned int t_peer;
 
-	tcp_seq snd_una;
 	tcp_seq rcv_una;
+	tcp_seq snd_una;
+	tcp_seq snd_nxt;
+	tcp_seq snd_max;
 
 	struct tcpup_info *next;
 };
 
 static int _tot_tcp = 0;
+static int _tot_pid = 0;
+static int _tot_inc = 0;
 static struct tcpup_info *_tcpup_info_header = NULL;
 
 static char const * const tcpstates[] = { 
@@ -45,10 +51,34 @@ static char const * const tcpstates[] = {
 	"LAST_ACK",     "FIN_WAIT_2",   "TIME_WAIT",
 };
 
+static long ts_get_ticks(void)
+{
+	int error;
+	struct timespec t0;
+
+	error = clock_gettime(CLOCK_MONOTONIC, &t0);
+	if (error == 0) {
+		return t0.tv_sec * 1000 + t0.tv_nsec / 1000000;
+	}
+
+	return -1;
+}
+
+static long second2ticks(int nsec)
+{
+	return nsec * 1000;
+}
+
 static void tcp_state_update(struct tcpup_info *upp, int state)
 {
 	fprintf(stderr, "%x/%-4d  %s\t -> %s\n",
 			upp->t_conv, _tot_tcp, tcpstates[upp->t_state], tcpstates[state]);
+
+	if (SEQ_GT(upp->snd_nxt, upp->snd_max)) {
+		/* update snd max to nxt */
+		upp->snd_max = upp->snd_nxt;
+	}
+
 	upp->t_state = state;
 	upp->x_state = state;
 	return;
@@ -77,7 +107,7 @@ static int tcpup_state_send(struct tcpup_info *upp, struct tcpiphdr *tcp, size_t
 
 	if (upp->x_state != upp->t_state
 			&& (tcp->th_flags & TH_ACK)
-			&& SEQ_GT(htonl(tcp->th_ack), upp->rcv_una)) {
+			&& SEQ_GEQ(htonl(tcp->th_ack), upp->rcv_una)) {
 		tcp_state_update(upp, upp->x_state);
 		upp->t_state = upp->x_state;
 	}
@@ -86,8 +116,10 @@ static int tcpup_state_send(struct tcpup_info *upp, struct tcpiphdr *tcp, size_t
 		case TCPS_CLOSED:
 			xflags = TH_SYN| TH_ACK;
 			if ((tcp->th_flags & xflags) == TH_SYN) {
+				upp->snd_nxt = htonl(tcp->th_seq) + 1;
+				upp->snd_max = htonl(tcp->th_seq) + 1;
+				upp->snd_una = htonl(tcp->th_seq) + 1;
 				tcp_state_update(upp, TCPS_SYN_SENT);
-				upp->snd_una = htonl(tcp->th_seq);
 				return 0;
 			}
 			break;
@@ -96,7 +128,7 @@ static int tcpup_state_send(struct tcpup_info *upp, struct tcpiphdr *tcp, size_t
 			assert((tcp->th_flags & TH_FIN) != TH_FIN);
 			xflags = TH_SYN| TH_ACK;
 			if ((tcp->th_flags & xflags) == TH_ACK
-					&& SEQ_GT(htonl(tcp->th_seq), upp->snd_una)) {
+					&& SEQ_GEQ(htonl(tcp->th_seq), upp->snd_nxt)) {
 				tcp_state_update(upp, upp->x_state);
 				return 0;
 			}
@@ -104,7 +136,7 @@ static int tcpup_state_send(struct tcpup_info *upp, struct tcpiphdr *tcp, size_t
 
 		case TCPS_ESTABLISHED:
 			if ((tcp->th_flags & TH_FIN) == TH_FIN) {
-				upp->snd_una = htonl(tcp->th_seq) + dlen;
+				upp->snd_nxt = htonl(tcp->th_seq) + dlen + 1;
 				tcp_state_update(upp, TCPS_FIN_WAIT_1);
 				return 0;
 			}
@@ -112,7 +144,7 @@ static int tcpup_state_send(struct tcpup_info *upp, struct tcpiphdr *tcp, size_t
 
 		case TCPS_CLOSE_WAIT:
 			if ((tcp->th_flags & TH_FIN) == TH_FIN) {
-				upp->snd_una = htonl(tcp->th_seq) + dlen;
+				upp->snd_nxt = htonl(tcp->th_seq) + dlen + 1;
 				tcp_state_update(upp, TCPS_LAST_ACK);
 				return 0;
 			}
@@ -127,16 +159,30 @@ static int tcpup_state_send(struct tcpup_info *upp, struct tcpiphdr *tcp, size_t
 			break;
 	}
 
+	if (dlen > 0) {
+		upp->snd_nxt = htonl(tcp->th_seq) + dlen;
+		if (SEQ_GT(upp->snd_nxt, upp->snd_max)) {
+			/* update snd max to nxt */
+			upp->snd_max = upp->snd_nxt;
+		}
+	}
+
 	return 0;
 }
 
 static int tcpup_state_receive(struct tcpup_info *upp, struct tcpiphdr *tcp, size_t dlen)
 {
 	int xflags = 0;
+	int snd_una = htonl(tcp->th_ack);
 
 	if (tcp->th_flags & TH_RST) {
 		upp->t_state = TCPS_CLOSED;
 		return 0;
+	}
+
+	if ((tcp->th_flags & TH_ACK) && SEQ_GT(snd_una, upp->snd_una)) {
+		/* update snd una from peer */
+		upp->snd_una = snd_una;
 	}
 
 	switch (upp->t_state) {
@@ -149,7 +195,7 @@ static int tcpup_state_receive(struct tcpup_info *upp, struct tcpiphdr *tcp, siz
 			}
 
 			if ((tcp->th_flags & xflags) == xflags
-					&& SEQ_GT(htonl(tcp->th_ack), upp->snd_una)) {
+					&& SEQ_GEQ(htonl(tcp->th_ack), upp->snd_nxt)) {
 				assert((tcp->th_flags & TH_FIN) != TH_FIN);
 				tcp_state_preload(upp, TCPS_ESTABLISHED, htonl(tcp->th_seq));
 				return 0;
@@ -158,7 +204,7 @@ static int tcpup_state_receive(struct tcpup_info *upp, struct tcpiphdr *tcp, siz
 
 		case TCPS_SYN_RECEIVED:
 			if ((tcp->th_flags & TH_ACK) == TH_ACK
-					&& SEQ_GT(htonl(tcp->th_ack), upp->snd_una)) {
+					&& SEQ_GEQ(htonl(tcp->th_ack), upp->snd_nxt)) {
 				assert((tcp->th_flags & TH_FIN) != TH_FIN);
 				tcp_state_preload(upp, TCPS_ESTABLISHED, htonl(tcp->th_seq));
 				return 0;
@@ -175,7 +221,7 @@ static int tcpup_state_receive(struct tcpup_info *upp, struct tcpiphdr *tcp, siz
 		case TCPS_FIN_WAIT_1:
 			xflags = TH_FIN| TH_ACK;
 			if ((tcp->th_flags & xflags) == xflags
-					&& SEQ_GT(htonl(tcp->th_ack), upp->snd_una)) {
+					&& SEQ_GEQ(htonl(tcp->th_ack), upp->snd_nxt)) {
 				tcp_state_preload(upp, TCPS_TIME_WAIT, htonl(tcp->th_seq) + dlen);
 				return 0;
 			}
@@ -186,7 +232,7 @@ static int tcpup_state_receive(struct tcpup_info *upp, struct tcpiphdr *tcp, siz
 			}
 
 			if ((tcp->th_flags & TH_ACK) == TH_ACK
-					&& SEQ_GT(htonl(tcp->th_ack), upp->snd_una)) {
+					&& SEQ_GEQ(htonl(tcp->th_ack), upp->snd_nxt)) {
 				tcp_state_preload(upp, TCPS_FIN_WAIT_2, htonl(tcp->th_seq) + dlen);
 				return 0;
 			}
@@ -201,7 +247,7 @@ static int tcpup_state_receive(struct tcpup_info *upp, struct tcpiphdr *tcp, siz
 
 		case TCPS_CLOSING:
 			if ((tcp->th_flags & TH_ACK) == TH_ACK
-					&& SEQ_GT(htonl(tcp->th_ack), upp->snd_una)) {
+					&& SEQ_GEQ(htonl(tcp->th_ack), upp->snd_nxt)) {
 				tcp_state_preload(upp, TCPS_TIME_WAIT, htonl(tcp->th_seq) + dlen);
 				return 0;
 			}
@@ -209,7 +255,7 @@ static int tcpup_state_receive(struct tcpup_info *upp, struct tcpiphdr *tcp, siz
 
 		case TCPS_LAST_ACK:
 			if ((tcp->th_flags & TH_ACK) == TH_ACK
-					&& SEQ_GT(htonl(tcp->th_ack), upp->snd_una)) {
+					&& SEQ_GEQ(htonl(tcp->th_ack), upp->snd_nxt)) {
 				tcp_state_preload(upp, TCPS_CLOSED, htonl(tcp->th_seq) + dlen);
 				return 0;
 			}
@@ -246,12 +292,12 @@ static tcpup_info *tcpup_findcb(int src, int dst, u_short sport, u_short dport)
 
 static tcpup_info *tcpup_lookup(uint32_t conv)
 {
-	time_t now;
+	long now;
 	struct tcpup_info *tp;
 	struct tcpup_info *tp_next;
 	struct tcpup_info **tp_prev = &_tcpup_info_header;
 
-	time(&now);
+	now = ts_get_ticks();
 	for (tp = _tcpup_info_header; tp; tp = tp_next) {
 		if (tp->t_conv == conv) {
 			tp->t_rcvtime = now;
@@ -268,7 +314,7 @@ static tcpup_info *tcpup_lookup(uint32_t conv)
 
 			case TCPS_LAST_ACK:
 			case TCPS_TIME_WAIT:
-				if (tp->t_rcvtime + 6 <= now) {
+				if (tp->t_rcvtime + second2ticks(6) <= now) {
 					*tp_prev = tp->next;
 					_tot_tcp--;
 					delete tp;
@@ -277,7 +323,7 @@ static tcpup_info *tcpup_lookup(uint32_t conv)
 				break;
 
 			default:
-				if (tp->t_rcvtime + 600 <= now) {
+				if (tp->t_rcvtime + second2ticks(120) <= now) {
 					*tp_prev = tp->next;
 					_tot_tcp--;
 					delete tp;
@@ -299,7 +345,10 @@ static tcpup_info *tcpup_newcb(int src, int dst, u_short sport, u_short dport)
 	tcpup_lookup(-1);
 	memset(up, 0, sizeof(*up));
 
-	up->t_conv = (0xffffffff & (long)(up));
+	if (_tot_pid == 0)
+		_tot_pid = (ts_get_ticks() << 24);
+
+	up->t_conv = _tot_pid | (_tot_inc++ & 0xff) | (random() & 0xffff) << 8;
 
 	up->t_from = src;
 	up->t_peer = dst;
@@ -308,7 +357,8 @@ static tcpup_info *tcpup_newcb(int src, int dst, u_short sport, u_short dport)
 	up->t_state = TCPS_CLOSED;
 	up->x_state = TCPS_CLOSED;
 	up->t_wscale = 7;
-	up->t_rcvtime = time(NULL);
+	up->t_rcvtime = ts_get_ticks();
+	up->t_xdat  = rand();
 
 	up->next = _tcpup_info_header;
 	_tcpup_info_header = up;
@@ -430,7 +480,7 @@ static int translate_tcpup(struct tcpiphdr *tcp, struct tcpuphdr *field, int len
 	return cnt + sizeof(*tcp) + offip;
 }
 
-int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size_t length)
+int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size_t length, int *pxdat)
 {
 	int offset;
 
@@ -473,9 +523,17 @@ int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size
 	}
 
 	struct tcpuphdr *uphdr = (struct tcpuphdr *)buf;
+	if (upp->snd_una == upp->snd_max) {
+		long ticks = ts_get_ticks();
+		if (ticks > upp->t_rcvtime + second2ticks(4)/10) {
+			upp->t_xdat = rand();
+		}
+	}
+
 	offset = translate_tcpip(upp, uphdr, tcp, length - sizeof(*ip));
 	uphdr->th_conv = upp->t_conv;
 
+	*pxdat = upp->t_xdat;
 	return offset;
 }
 
@@ -572,7 +630,7 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 	upp = tcpup_lookup(field->th_conv);
 
 	if (upp == NULL) {
-		fprintf(stderr, "%x not find\n", field->th_conv);
+		fprintf(stderr, "%x not find %x\n", field->th_conv, field->th_magic);
 		if (field->th_flags & TH_RST) {
 			/* silent drop, ignore packet */
 			return 0;
