@@ -415,7 +415,7 @@ int main(int argc, char **argv)
 									write(interface, buf, len1);
 								} else if (len1 == -1) {
 									//fprintf(stderr, "write to tun length: %d\n", length);
-									len1 = tcpup_reset_fill(buf, adj, len);
+									len1 = tcpup_reset_fill(buf, plain, len);
 									vpn_output(tunnel, buf, len, 0);
 								}
 
@@ -588,7 +588,7 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 							write(interface, buf, len1);
 						} else if (len1 == -1) {
 							//fprintf(stderr, "write to tun length: %d\n", length);
-							len1 = tcpup_reset_fill(buf, adj, len);
+							len1 = tcpup_reset_fill(buf, plain, len);
 							if (vpn_output(tunnel, buf, len, 0) == -1) return 0;
 						}
 
