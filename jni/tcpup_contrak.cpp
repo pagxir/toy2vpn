@@ -87,7 +87,7 @@ static void tcp_state_update(struct tcpup_info *upp, int state)
 static void tcp_state_preload(struct tcpup_info *upp, int state, tcp_seq ack_seq)
 {
 	if (upp->x_state != state) {
-		fprintf(stderr, "%x/%-4d  %s\t <- %s\n",
+		fprintf(stderr, "%x/%-4d  %s\t -= %s\n",
 				upp->t_conv, _tot_tcp, tcpstates[upp->t_state], tcpstates[state]);
 		upp->rcv_una = ack_seq;
 		upp->x_state = state;
@@ -128,7 +128,7 @@ static int tcpup_state_send(struct tcpup_info *upp, struct tcpiphdr *tcp, size_t
 			assert((tcp->th_flags & TH_FIN) != TH_FIN);
 			xflags = TH_SYN| TH_ACK;
 			if ((tcp->th_flags & xflags) == TH_ACK
-					&& SEQ_GEQ(htonl(tcp->th_seq), upp->snd_nxt)) {
+					&& SEQ_GT(htonl(tcp->th_seq), upp->snd_nxt)) {
 				tcp_state_update(upp, upp->x_state);
 				return 0;
 			}
@@ -190,7 +190,7 @@ static int tcpup_state_receive(struct tcpup_info *upp, struct tcpiphdr *tcp, siz
 			xflags = TH_SYN| TH_ACK;
 			if ((tcp->th_flags & xflags) == TH_SYN) {
 				assert((tcp->th_flags & TH_FIN) != TH_FIN);
-				tcp_state_preload(upp, TCPS_SYN_RECEIVED, htonl(tcp->th_seq));
+				tcp_state_preload(upp, TCPS_SYN_RECEIVED, htonl(tcp->th_seq) + 1);
 				return 0;
 			}
 
@@ -213,7 +213,7 @@ static int tcpup_state_receive(struct tcpup_info *upp, struct tcpiphdr *tcp, siz
 
 		case TCPS_ESTABLISHED:
 			if ((tcp->th_flags & TH_FIN) == TH_FIN) {
-				tcp_state_preload(upp, TCPS_CLOSE_WAIT, htonl(tcp->th_seq));
+				tcp_state_preload(upp, TCPS_CLOSE_WAIT, htonl(tcp->th_seq) + 1);
 				return 0;
 			}
 			break;
@@ -222,12 +222,12 @@ static int tcpup_state_receive(struct tcpup_info *upp, struct tcpiphdr *tcp, siz
 			xflags = TH_FIN| TH_ACK;
 			if ((tcp->th_flags & xflags) == xflags
 					&& SEQ_GEQ(htonl(tcp->th_ack), upp->snd_nxt)) {
-				tcp_state_preload(upp, TCPS_TIME_WAIT, htonl(tcp->th_seq) + dlen);
+				tcp_state_preload(upp, TCPS_TIME_WAIT, htonl(tcp->th_seq) + dlen + 1);
 				return 0;
 			}
 
 			if ((tcp->th_flags & TH_FIN) == TH_FIN) {
-				tcp_state_preload(upp, TCPS_CLOSING, htonl(tcp->th_seq) + dlen);
+				tcp_state_preload(upp, TCPS_CLOSING, htonl(tcp->th_seq) + dlen + 1);
 				return 0;
 			}
 
@@ -240,7 +240,7 @@ static int tcpup_state_receive(struct tcpup_info *upp, struct tcpiphdr *tcp, siz
 
 		case TCPS_FIN_WAIT_2:
 			if ((tcp->th_flags & TH_FIN) == TH_FIN) {
-				tcp_state_preload(upp, TCPS_TIME_WAIT, htonl(tcp->th_seq) + dlen);
+				tcp_state_preload(upp, TCPS_TIME_WAIT, htonl(tcp->th_seq) + dlen + 1);
 				return 0;
 			}
 			break;
@@ -630,14 +630,14 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 	upp = tcpup_lookup(field->th_conv);
 
 	if (upp == NULL) {
-		fprintf(stderr, "%x not find %x\n", field->th_conv, field->th_magic);
 		if (field->th_flags & TH_RST) {
 			/* silent drop, ignore packet */
 			return 0;
 		}
 
+		fprintf(stderr, "%x not find %x\n", field->th_conv, field->th_magic);
 		if (field->th_flags & TH_ACK) {
-			/* send back rst */
+			fprintf(stderr, "%x send back reset 0x%x\n", field->th_conv, field->th_magic);
 			return -1;
 		}
 
