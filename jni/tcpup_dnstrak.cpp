@@ -51,9 +51,14 @@ static struct cached_client {
     unsigned short l_ident;
 
     union {
-        struct sockaddr sa; 
+        struct sockaddr sa;
         struct sockaddr_in in0;
     } from;
+
+    union {
+        struct sockaddr sa; 
+        struct sockaddr_in in0;
+    } dest;
 } __cached_client[512];
 
 static int __last_index = 0;
@@ -87,9 +92,9 @@ int resolved_dns_packet(void *buf, const void *packet, size_t length, struct soc
 
 			udp->len = htons(length + sizeof(*udp));
 			udp->check = 0;
-			udp->source = from->sin_port;
+			udp->source = client->dest.in0.sin_port;
 			udp->dest   = client->from.in0.sin_port;
-			udp_checksum(&udp->check, &from->sin_addr,
+			udp_checksum(&udp->check, &client->dest.in0.sin_addr,
 					&client->from.in0.sin_addr, udp, length + sizeof(*udp));
 
 			ip->ihl = 5;
@@ -102,7 +107,7 @@ int resolved_dns_packet(void *buf, const void *packet, size_t length, struct soc
 			ip->protocol = IPPROTO_UDP;
 			ip->check = 0;
 
-			ip->saddr = from->sin_addr.s_addr;
+			ip->saddr = client->dest.in0.sin_addr.s_addr;
 			ip->daddr = client->from.in0.sin_addr.s_addr;
 			ip_checksum(&ip->check, ip, sizeof(*ip));
 
@@ -113,7 +118,7 @@ int resolved_dns_packet(void *buf, const void *packet, size_t length, struct soc
 	return 0;
 }
 
-int record_dns_packet(void *packet, size_t length, struct sockaddr_in *from)
+int record_dns_packet(void *packet, size_t length, struct sockaddr_in *from, struct sockaddr_in *to)
 {
 	int flags;
 	struct dns_query_packet *dnsp;
@@ -150,6 +155,7 @@ int record_dns_packet(void *packet, size_t length, struct sockaddr_in *from)
 	struct cached_client *client = &__cached_client[index];
 
 	memcpy(&client->from, from, sizeof(*from));
+	memcpy(&client->dest, to, sizeof(*to));
 	client->flags = 1;
 	client->l_ident = htons(dnsp->q_ident);
 	client->r_ident = (rand() & 0xFE00) | index;
@@ -163,7 +169,7 @@ int send_out_ip2udp(int lowfd, unsigned char *packet, size_t length)
 	socklen_t ttl;
 	struct iphdr *ip;
 	struct udphdr *udp;
-	struct sockaddr_in sa;
+	struct sockaddr_in sa, da;
 
 	ip = (struct iphdr *)packet;
 	if (ip->protocol == IPPROTO_UDP) {
@@ -173,8 +179,12 @@ int send_out_ip2udp(int lowfd, unsigned char *packet, size_t length)
 			sa.sin_port   = udp->source;
 			sa.sin_addr.s_addr = ip->saddr;
 
+			da.sin_family = AF_INET;
+			da.sin_port   = udp->dest;
+			da.sin_addr.s_addr = ip->daddr;
+
 			len = packet + length - (unsigned char *)(udp + 1);
-			if (ip->ttl > 1 && record_dns_packet(udp + 1, len, &sa)) {
+			if (ip->ttl > 1 && record_dns_packet(udp + 1, len, &sa, &da)) {
 				sa.sin_port   = udp->dest;
 				sa.sin_addr.s_addr = ip->daddr;
 				ttl = (ip->ttl - 1);
@@ -182,6 +192,46 @@ int send_out_ip2udp(int lowfd, unsigned char *packet, size_t length)
 
 				err = sendto(lowfd, udp + 1, len, 0, (struct sockaddr *)&sa, sizeof(sa));
 				return 1;
+			}
+		}
+	}
+
+	return 0;
+}
+
+int fill_out_ip2udp(char *buf, unsigned char *packet, size_t length)
+{
+	int len, err;
+	socklen_t ttl;
+	struct iphdr *ip;
+	struct udphdr *udp;
+	struct sockaddr_in sa, da;
+
+	ip = (struct iphdr *)packet;
+	if (ip->protocol == IPPROTO_UDP) {
+		udp = (struct udphdr *)(ip + 1);
+		if (udp->dest == htons(53)) {
+			sa.sin_family = AF_INET;
+			sa.sin_port   = udp->source;
+			sa.sin_addr.s_addr = ip->saddr;
+
+			da.sin_family = AF_INET;
+			da.sin_port   = udp->dest;
+			da.sin_addr.s_addr = ip->daddr;
+
+			len = packet + length - (unsigned char *)(udp + 1);
+			if (ip->ttl > 1 && record_dns_packet(udp + 1, len, &sa, &da)) {
+#if 0
+				sa.sin_port   = udp->dest;
+				sa.sin_addr.s_addr = ip->daddr;
+				ttl = (ip->ttl - 1);
+				err = setsockopt(lowfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+
+				err = sendto(lowfd, udp + 1, len, 0, (struct sockaddr *)&sa, sizeof(sa));
+				return 1;
+#endif
+				memcpy(buf, udp + 1, len);
+				return len;
 			}
 		}
 	}

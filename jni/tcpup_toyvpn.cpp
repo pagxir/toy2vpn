@@ -275,6 +275,14 @@ static void usage(const char *prog_name)
     return;
 }
 
+#define DNS_MAGIC_LEN 24
+static unsigned char dns_magic[DNS_MAGIC_LEN] = {
+	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+};
+
+
 int main(int argc, char **argv)
 {
 	int dirty = 0;
@@ -408,8 +416,15 @@ int main(int argc, char **argv)
 								static u_char plain[1500];
 								packet_decrypt(key, plain, adj, len);
 
-								/* dispatch to tun device. */
-								int len1 = translate_up2ip(buf, sizeof(buf), plain, len);
+								int len1 = 0;
+								if (length >= 12 + DNS_MAGIC_LEN && 0 == memcmp(plain, dns_magic, DNS_MAGIC_LEN)) {
+									int newlen = resolved_dns_packet(buf, plain + DNS_MAGIC_LEN, len - DNS_MAGIC_LEN, (struct sockaddr_in *)&from);
+									if (newlen > 12) len1 = newlen;
+								} else {
+									/* dispatch to tun device. */
+									len1 = translate_up2ip(buf, sizeof(buf), plain, len);
+								}
+
 								if (len1 > 0) {
 									//fprintf(stderr, "write to tun length: %d\n", length);
 									write(interface, buf, len1);
@@ -450,10 +465,18 @@ int main(int argc, char **argv)
 						length = read(interface, packet, sizeof(packet));
 
 						interface_prepare = 0;
-						if (length > (int)sizeof(struct ipv4_header) &&
-							send_out_ip2udp(tunnel_udp, packet, length) == 0) {
 
-							length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat);
+						if (length > (int)sizeof(struct ipv4_header)) {
+							int newlen = fill_out_ip2udp((char *)(buf + 24), packet, length);
+
+							if (newlen > 12) {
+								memcpy(buf, dns_magic, DNS_MAGIC_LEN);
+								length = newlen + DNS_MAGIC_LEN;
+							} else {
+								/* should be an tcp packet, so do traslate now. */
+								length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat);
+							}
+
 							if (length > 0) {
 								// fprintf(stderr, "send out packet: %d\n", length);
 								vpn_output(tunnel, buf, length, xdat);
@@ -581,8 +604,15 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 						static u_char plain[1500];
 						packet_decrypt(key, plain, adj, len);
 
-						/* dispatch to tun device. */
-						int len1 = translate_up2ip(buf, sizeof(buf), plain, len);
+						int len1 = 0;
+						if (length >= 12 + DNS_MAGIC_LEN && 0 == memcmp(plain, dns_magic, DNS_MAGIC_LEN)) {
+							int newlen = resolved_dns_packet(buf, plain + DNS_MAGIC_LEN, len - DNS_MAGIC_LEN, (struct sockaddr_in *)&from);
+							if (newlen > 12) len1 = newlen;
+						} else {
+							/* dispatch to tun device. */
+							len1 = translate_up2ip(buf, sizeof(buf), plain, len);
+						}
+
 						if (len1 > 0) {
 							//fprintf(stderr, "write to tun length: %d\n", length);
 							write(interface, buf, len1);
@@ -619,12 +649,19 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 				length = read(interface, packet, sizeof(packet));
 
 				interface_prepare = 0;
-				if (length > (int)sizeof(struct ipv4_header) &&
-						send_out_ip2udp(tunnel_udp, packet, length) == 0) {
+				if (length > (int)sizeof(struct ipv4_header)) {
 					int xdat = 0;
-					interface_prepare = 1;
+					int newlen = fill_out_ip2udp((char *)(buf + 24), packet, length);
 
-					length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat);
+					interface_prepare = 1;
+					if (newlen > 12) {
+						memcpy(buf, dns_magic, DNS_MAGIC_LEN);
+						length = newlen + DNS_MAGIC_LEN;
+					} else {
+						/* should be an tcp packet, so do traslate now. */
+						length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat);
+					}
+
 					if (length > 0) {
 						// fprintf(stderr, "send out packet: %d\n", length);
 						if (vpn_output(tunnel, buf, length, xdat) == -1) return 0;
