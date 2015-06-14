@@ -37,6 +37,10 @@ struct tcpup_info {
 	tcp_seq snd_nxt;
 	tcp_seq snd_max;
 
+	int t_mrked;
+	int t_xdat1;
+	tcp_seq ts_mark;
+
 	struct tcpup_info *next;
 };
 
@@ -360,6 +364,10 @@ static tcpup_info *tcpup_newcb(int src, int dst, u_short sport, u_short dport)
 	up->t_rcvtime = ts_get_ticks();
 	up->t_xdat  = rand();
 
+	up->t_mrked = 0;
+	up->ts_mark = 0;
+	up->t_xdat1 = rand();
+
 	up->next = _tcpup_info_header;
 	_tcpup_info_header = up;
 	_tot_tcp++;
@@ -422,6 +430,11 @@ static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, stru
 	if (to.to_flags & TOF_TS) {
 		field->th_tsecr = htonl(to.to_tsecr);
 		field->th_tsval = htonl(to.to_tsval);
+	}
+
+	if (info->t_mrked == 0) {
+		info->ts_mark = htonl(field->th_tsval);
+		info->t_mrked = 1;
 	}
 
 	if (info->t_wscale != 7) {
@@ -527,6 +540,7 @@ int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size
 		long ticks = ts_get_ticks();
 		if (ticks > upp->t_rcvtime + second2ticks(4)/10) {
 			upp->t_xdat = rand();
+			upp->t_xdat1 = rand();
 		}
 	}
 
@@ -649,6 +663,15 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 
 	ip = (struct iphdr *)buf;
 	tcp = (struct tcpiphdr *)(ip + 1);
+
+	int t_xdat;
+	if (upp->t_mrked &&
+			SEQ_GEQ(htonl(field->th_tsecr), upp->ts_mark)) {
+		t_xdat = upp->t_xdat;
+		upp->t_xdat = upp->t_xdat1;
+		upp->t_xdat1 = t_xdat;
+		upp->t_mrked = 0;
+	}
 
 	offset = translate_tcpup(tcp, field, length);
 
