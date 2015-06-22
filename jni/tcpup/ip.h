@@ -43,7 +43,7 @@ struct tcpiphdr
 struct tcpupopt;
 int tcpip_dooptions(struct tcpupopt *to, u_char *cp, int cnt);
 int tcpip_addoptions(struct tcpupopt *to, u_char *cp);
-int tcp_checksum(void *store, struct in_addr *src, struct in_addr *dst, void *buf, size_t len);
 int udp_checksum(void *store, struct in_addr *src, struct in_addr *dst, void *buf, size_t len);
+int tcp_checksum(void *store, int is_ipv6, const void *src, const void *dst, void *buf, size_t len);
 int ip_checksum(void *store, void *buf, size_t len);
 #endif

@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <netinet/ip6.h>
 #include <netinet/tcp.h>
 
 #include <time.h>
@@ -27,10 +28,13 @@ struct tcpup_info {
 	long t_rcvtime;
 
 	u_short s_port;
-	unsigned int t_from;
-
 	u_short d_port;
-	unsigned int t_peer;
+
+	union {
+		struct in_addr in;
+		struct in6_addr in6;
+	} t_from, t_peer;
+	int ip_ver;
 
 	tcp_seq rcv_una;
 	tcp_seq snd_una;
@@ -283,8 +287,29 @@ static tcpup_info *tcpup_findcb(int src, int dst, u_short sport, u_short dport)
 			continue;
 		}
 
-		if (tp->t_from != src ||
-				tp->t_peer != dst) {
+		if (tp->t_from.in.s_addr != src ||
+				tp->t_peer.in.s_addr != dst) {
+			continue;
+		}
+
+		return tp;
+	}
+
+	return 0;
+}
+
+static tcpup_info *tcpup_findcb6(const struct in6_addr &src, const struct in6_addr &dst, u_short sport, u_short dport)
+{
+	struct tcpup_info *tp;
+
+	for (tp = _tcpup_info_header; tp; tp = tp->next) {
+		if (tp->s_port != sport ||
+				tp->d_port != dport) {
+			continue;
+		}
+
+		if (memcmp(&tp->t_from, &src, sizeof(src)) ||
+				memcmp(&tp->t_peer, &dst, sizeof(dst))) {
 			continue;
 		}
 
@@ -354,8 +379,8 @@ static tcpup_info *tcpup_newcb(int src, int dst, u_short sport, u_short dport)
 
 	up->t_conv = _tot_pid | (_tot_inc++ & 0xff) | (random() & 0xffff) << 8;
 
-	up->t_from = src;
-	up->t_peer = dst;
+	up->t_from.in.s_addr = src;
+	up->t_peer.in.s_addr = dst;
 	up->s_port = sport;
 	up->d_port = dport;
 	up->t_state = TCPS_CLOSED;
@@ -363,6 +388,7 @@ static tcpup_info *tcpup_newcb(int src, int dst, u_short sport, u_short dport)
 	up->t_wscale = 7;
 	up->t_rcvtime = ts_get_ticks();
 	up->t_xdat  = rand();
+	up->ip_ver  = 0x04;
 
 	up->t_mrked = 0;
 	up->ts_mark = 0;
@@ -375,8 +401,21 @@ static tcpup_info *tcpup_newcb(int src, int dst, u_short sport, u_short dport)
 	return up;
 }
 
-static u_char _null_[8] = {0};
-static u_char type_len_map[8] = {0x0, 0x04, 0x0, 0x0, 0x0, 0x10};
+static tcpup_info *tcpup_newcb6(const struct in6_addr &src, const struct in6_addr &dst, u_short sport, u_short dport)
+{
+	struct tcpup_info *up = tcpup_newcb(0, 0, sport, dport);
+	assert(up != NULL);
+
+	up->t_from.in6 = src;
+	up->t_peer.in6 = dst;
+	up->ip_ver  = 0x06;
+
+	return up;
+}
+
+
+static u_char _null_[28] = {0};
+static u_char type_len_map[8] = {0x0, 0x04, 0x0, 0x0, 0x10};
 
 static int set_relay_info(u_char *target, int type, void *host, u_short port)
 {
@@ -418,7 +457,7 @@ static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, stru
 	offip = tcpip_dooptions(&to, src, cnt - sizeof(*tcp));
 	if (tcp->th_flags & TH_SYN) {
 		to.to_flags |= TOF_DESTINATION;
-		to.to_dslen  = set_relay_info(_null_, 0x01, &info->t_peer, info->d_port);
+		to.to_dslen  = set_relay_info(_null_, info->ip_ver == 0x04? 0x01: 0x04, &info->t_peer, info->d_port);
 		to.to_dsaddr = _null_;
 
 		if (to.to_flags & TOF_SCALE) {
@@ -496,20 +535,43 @@ static int translate_tcpup(struct tcpiphdr *tcp, struct tcpuphdr *field, int len
 int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size_t length, int *pxdat)
 {
 	int offset;
+	int is_ipv6 = 1;
 
 	struct iphdr *ip;
+	struct ip6_hdr *ip6;
 	struct tcpiphdr *tcp;
 	struct tcpup_info *upp = NULL;
 
 	ip = (struct iphdr *)packet;
-	tcp = (struct tcpiphdr *)(ip + 1);
 
-	if (ip->protocol != IPPROTO_TCP) {
-		fprintf(stderr, "drop, protocol not support: %d\n", ip->protocol);
-		return 0;
+	switch (ip->version) {
+		case 0x06:
+			ip6 = (struct ip6_hdr *)packet;
+			tcp = (struct tcpiphdr *)(ip6 + 1);
+			if (ip6->ip6_ctlun.ip6_un1.ip6_un1_nxt != IPPROTO_TCP) {
+				fprintf(stderr, "drop6, protocol not support: %d\n", ip6->ip6_ctlun.ip6_un1.ip6_un1_nxt);
+				return 0;
+			}
+			upp = tcpup_findcb6(ip6->ip6_src, ip6->ip6_dst, tcp->th_sport, tcp->th_dport);
+			break;
+
+		case 0x04:
+			is_ipv6 = 0;
+			tcp = (struct tcpiphdr *)(ip + 1);
+			if (ip->protocol != IPPROTO_TCP) {
+				fprintf(stderr, "drop, protocol not support: %d\n", ip->protocol);
+				return 0;
+			}
+
+			upp = tcpup_findcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport);
+			break;
+
+		default:
+			fprintf(stderr, "drop, family not support: %d\n", ip->version);
+			is_ipv6 = 0;
+			return 0;
 	}
 
-	upp = tcpup_findcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport);
 
 	if (upp == NULL) {
 		if (tcp->th_flags & TH_RST) {
@@ -526,7 +588,9 @@ int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size
 
 		if (tcp->th_flags & TH_SYN) {
 			fprintf(stderr, "tcpup connect context is created\n");
-			upp = tcpup_newcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport);
+			upp = (is_ipv6 == 0)?
+				tcpup_newcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport):
+				tcpup_newcb6(ip6->ip6_src, ip6->ip6_dst, tcp->th_sport, tcp->th_dport);
 			assert(upp != NULL);
 		} else {
 			/* silent drop, ignore packet */
@@ -544,7 +608,7 @@ int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size
 		}
 	}
 
-	offset = translate_tcpip(upp, uphdr, tcp, length - sizeof(*ip));
+	offset = translate_tcpip(upp, uphdr, tcp, packet + length - (unsigned char *)tcp);
 	uphdr->th_conv = upp->t_conv;
 
 	*pxdat = upp->t_xdat;
@@ -553,30 +617,62 @@ int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size
 
 int tcp_reset_fill(unsigned char *buf, unsigned char *packet, size_t length)
 {
+	int isv6 = 1;
 	struct iphdr *ip;
 	struct iphdr *ip1;
+	struct ip6_hdr *ip6;
+	struct ip6_hdr *ip6x;
 	struct tcpiphdr *tcp;
 	struct tcpiphdr *tcp1;
 	struct in_addr saddr, daddr;
 
-	ip = (struct iphdr *)buf;
-	tcp = (struct tcpiphdr *)(ip + 1);
-
 	ip1 = (struct iphdr *)packet;
-	tcp1 = (struct tcpiphdr *)(ip1 + 1);
+	switch (ip1->version) {
+		case 0x04:
+			isv6 = 0;
+			tcp1 = (struct tcpiphdr *)(ip1 + 1);
+			break;
 
-	ip->ihl = 5;
-	ip->version = 4;
-	ip->tos = 0;
-	ip->tot_len = htons(sizeof(*tcp) + sizeof(*ip));
-	ip->id  = (0xffff & (long)ip);
-	ip->frag_off = htons(0x4000);
-	ip->ttl = 8;
-	ip->protocol = IPPROTO_TCP;
-	ip->check = 0;
+		case 0x06:
+			ip6x = (struct ip6_hdr *)packet;
+			tcp1 = (struct tcpiphdr *)(ip6x + 1);
+			break;
 
-	ip->saddr = ip1->daddr;
-	ip->daddr = ip1->saddr;
+		default:
+			isv6 = 0;
+			return 0;
+	}
+
+	if (isv6) {
+		ip6 = (struct ip6_hdr *)buf;
+		tcp = (struct tcpiphdr *)(ip6 + 1);
+
+		ip6->ip6_ctlun.ip6_un1.ip6_un1_flow = htonl(0x60000000);
+		ip6->ip6_ctlun.ip6_un1.ip6_un1_plen = htons(sizeof(*tcp));
+
+		ip6->ip6_ctlun.ip6_un1.ip6_un1_nxt = IPPROTO_TCP;
+		ip6->ip6_ctlun.ip6_un1.ip6_un1_hlim = 10;
+
+		ip6->ip6_src = ip6x->ip6_dst;
+		ip6->ip6_dst = ip6x->ip6_src;
+	} else {
+		ip = (struct iphdr *)buf;
+		tcp = (struct tcpiphdr *)(ip + 1);
+
+		ip->ihl = 5;
+		ip->version = 4;
+		ip->tos = 0;
+		ip->tot_len = htons(sizeof(*tcp) + sizeof(*ip));
+		ip->id  = (0xffff & (long)ip);
+		ip->frag_off = htons(0x4000);
+		ip->ttl = 8;
+		ip->protocol = IPPROTO_TCP;
+		ip->check = 0;
+
+		ip->saddr = ip1->daddr;
+		ip->daddr = ip1->saddr;
+	}
+
 	tcp->th_dport = tcp1->th_sport;
 	tcp->th_sport = tcp1->th_dport;
 	tcp->th_sum   = 0;
@@ -597,13 +693,14 @@ int tcp_reset_fill(unsigned char *buf, unsigned char *packet, size_t length)
 	tcp->th_x2     = 0;
 	tcp->th_urp    = 0;
 
-	saddr.s_addr = ip->saddr;
-	daddr.s_addr = ip->daddr;
-	tcp_checksum(&tcp->th_sum, &saddr, &daddr, tcp, sizeof(*tcp));
+	if (isv6) {
+		tcp_checksum(&tcp->th_sum, isv6, &ip6->ip6_src, &ip6->ip6_dst, tcp, sizeof(*tcp));
+	} else {
+		tcp_checksum(&tcp->th_sum, isv6, &ip->saddr, &ip->daddr, tcp, sizeof(*tcp));
+		ip_checksum(&ip->check, ip, sizeof(*ip));
+	}
 
-	ip_checksum(&ip->check, ip, sizeof(*ip));
-
-	return sizeof(*ip) + sizeof(*tcp);
+	return (unsigned char *)(tcp + 1) - buf;
 }
 
 int tcpup_reset_fill(unsigned char *buf, unsigned char *packet, size_t length)
@@ -635,6 +732,7 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 {
 	int offset;
 	struct iphdr *ip;
+	struct ip6_hdr *ip6;
 	struct tcpiphdr *tcp;
 	struct in_addr saddr, daddr;
 	struct tcpup_info *upp = NULL;
@@ -661,42 +759,62 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 		return 0;
 	}
 
-	ip = (struct iphdr *)buf;
-	tcp = (struct tcpiphdr *)(ip + 1);
+	if (upp->ip_ver == 0x04) {
+		ip = (struct iphdr *)buf;
+		tcp = (struct tcpiphdr *)(ip + 1);
+
+		ip->ihl = 5;
+		ip->version = 4;
+		ip->tos = 0;
+		ip->id  = (0xffff & (long)ip);
+		ip->tot_len = htons(sizeof(*tcp) + sizeof(*ip));
+		ip->frag_off = htons(0x4000);
+		ip->ttl = 8;
+		ip->protocol = IPPROTO_TCP;
+		ip->check = 0;
+
+		ip->saddr = upp->t_peer.in.s_addr;
+		ip->daddr = upp->t_from.in.s_addr;
+	} else {
+		ip6 = (struct ip6_hdr *)buf;
+		tcp = (struct tcpiphdr *)(ip6 + 1);
+
+		ip6->ip6_ctlun.ip6_un1.ip6_un1_flow = htonl(0x60000000);
+		ip6->ip6_ctlun.ip6_un1.ip6_un1_plen = htons(sizeof(*tcp));
+
+		ip6->ip6_ctlun.ip6_un1.ip6_un1_nxt = IPPROTO_TCP;
+		ip6->ip6_ctlun.ip6_un1.ip6_un1_hlim = 10;
+
+		ip6->ip6_src = upp->t_peer.in6;
+		ip6->ip6_dst = upp->t_from.in6;
+	}
 
 	int t_xdat;
 	if (upp->t_mrked &&
 			SEQ_GEQ(htonl(field->th_tsecr), upp->ts_mark)) {
+#if 0
 		t_xdat = upp->t_xdat;
 		upp->t_xdat = upp->t_xdat1;
 		upp->t_xdat1 = t_xdat;
+#endif
 		upp->t_mrked = 0;
 	}
 
 	offset = translate_tcpup(tcp, field, length);
 
-	ip->ihl = 5;
-	ip->version = 4;
-	ip->tos = 0;
-	ip->tot_len = htons(offset + sizeof(*ip));
-	ip->id  = (0xffff & (long)ip);
-	ip->frag_off = htons(0x4000);
-	ip->ttl = 8;
-	ip->protocol = IPPROTO_TCP;
-	ip->check = 0;
-
-	ip->saddr = upp->t_peer;
-	ip->daddr = upp->t_from;
 	tcp->th_dport = upp->s_port;
 	tcp->th_sport = upp->d_port;
 	tcp->th_sum   = 0;
 
-	saddr.s_addr = ip->saddr;
-	daddr.s_addr = ip->daddr;
-	tcp_checksum(&tcp->th_sum, &saddr, &daddr, tcp, offset);
-
-	ip_checksum(&ip->check, ip, sizeof(*ip));
+	if (upp->ip_ver == 0x04) {
+		ip->tot_len = htons(offset + sizeof(*ip));
+		tcp_checksum(&tcp->th_sum, 0, &ip->saddr, &ip->daddr, tcp, offset);
+		ip_checksum(&ip->check, ip, sizeof(*ip));
+	} else {
+		ip6->ip6_ctlun.ip6_un1.ip6_un1_plen = htons(offset);
+		tcp_checksum(&tcp->th_sum, 1, &ip6->ip6_src, &ip6->ip6_dst, tcp, offset);
+	}
 
 	tcpup_state_receive(upp, tcp, offset - (tcp->th_off << 2));
-	return offset + sizeof(*ip);
+	return (unsigned char *)tcp + offset - buf;
 }
