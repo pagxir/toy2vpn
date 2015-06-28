@@ -792,11 +792,9 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 	int t_xdat;
 	if (upp->t_mrked &&
 			SEQ_GEQ(htonl(field->th_tsecr), upp->ts_mark)) {
-#if 0
 		t_xdat = upp->t_xdat;
 		upp->t_xdat = upp->t_xdat1;
 		upp->t_xdat1 = t_xdat;
-#endif
 		upp->t_mrked = 0;
 	}
 

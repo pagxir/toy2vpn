@@ -595,6 +595,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 									break;
 							}
 						} else {
+							Log.d(TAG, "add outside route: " + fields[1] + "/" + fields[2]);
 							builder.addRoute(fields[1], Integer.parseInt(fields[2]));
 						}
                         break;

@@ -11,6 +11,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.res.Resources;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
@@ -34,7 +35,12 @@ import android.widget.ListView;
 import android.widget.CompoundButton;
 import android.widget.CompoundButton.OnCheckedChangeListener;
 
+import java.util.Scanner;
 import java.util.ArrayList;
+import java.io.IOException;
+
+import java.net.URL;
+import java.net.URLConnection;
 
 public class ToyVpnSettings extends PreferenceActivity
 	implements Preference.OnPreferenceChangeListener{
@@ -93,28 +99,20 @@ public class ToyVpnSettings extends PreferenceActivity
 		fillList();
     }
 
-	static final String mSiteList0 = 
-		"Los Angeles(RAW):www.9zai.net:RAW,secret=hello|" +
-		"Los Angeles(UDP):www.9zai.net:UDP,port=53,secret=hello|" +
-		"Los Angeles(RAW):lax.shifenwa.com:RAW,secret=hello|" +
-		"Los Angeles(UDP):lax.shifenwa.com:UDP,port=53,secret=hello|" +
-		"Backup Node(RAW):ali.9zai.net:RAW,secret=hello|" +
-		"Backup Node(UDP):ali.9zai.net:UDP,port=53,secret=hello";
-
-	static final String mSiteList = 
-		"Los Angeles(RAW):www.9zai.net:RAW,secret=hello|" +
-		"Los Angeles(UDP):www.9zai.net:UDP,port=53,secret=hello|" +
-		"Los Angeles(RAW):lax.shifenwa.com:RAW,secret=hello|" +
-		"Los Angeles(UDP):lax.shifenwa.com:UDP,port=53,secret=hello";
-
     private void fillList() {
         PreferenceGroup apnList = (PreferenceGroup) findPreference("apn_list");
         apnList.removeAll();
 
-		SharedPreferences sp = getSharedPreferences("world_site_list", Context.MODE_PRIVATE);
-		String siteList = sp.getString("site_list", mSiteList0);
+		SharedPreferences sp = getSharedPreferences("ubn_conf", Context.MODE_PRIVATE);
+		String siteList = sp.getString("vpn_site_list", "");
 
-		String[] items = siteList.split("\\|");
+		Resources res = getResources();
+		String[] items = res.getStringArray(R.array.vpn_site_list);
+
+		String[] saves = siteList.split("\\|");
+		if (saves.length > 1) {
+			items = saves;
+		}
 
         for (String item: items) {
             String key = item;
@@ -183,6 +181,8 @@ public class ToyVpnSettings extends PreferenceActivity
         super.onDestroy();
     }
 
+	static final int MENU_RESTORE = 0x90;
+
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         super.onCreateOptionsMenu(menu);
@@ -195,11 +195,21 @@ public class ToyVpnSettings extends PreferenceActivity
                 getResources().getString(R.string.menu_restore))
                 .setIcon(android.R.drawable.ic_menu_upload);
 */
+		menu.add(0, MENU_RESTORE, 0,
+				getResources().getString(R.string.menu_restore))
+			.setIcon(android.R.drawable.ic_menu_upload);
         return true;
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
+
+		switch (item.getItemId()) {
+			case MENU_RESTORE:
+				new Thread(mUpdateConfig).start();
+				break;
+		}
+
         return super.onOptionsItemSelected(item);
     }
 
@@ -213,5 +223,31 @@ public class ToyVpnSettings extends PreferenceActivity
 		Log.d("ToyVPN", "onPreferenceChange");
 		return true;
 	}
+
+	public void doUpdateConfig() {
+		String cnf = "";
+		String url = "http://www.9zai.net/downloads/upn.conf";
+
+		try {
+			URLConnection conn = new URL(url).openConnection();
+			Scanner scanner = new Scanner(conn.getInputStream(), "UTF-8");
+			cnf = scanner.useDelimiter("\\A").next();
+			scanner.close();
+		} catch (IOException e) {
+			// e.printStack();
+			return;
+		}
+
+		SharedPreferences sp = getSharedPreferences("ubn_conf", Context.MODE_PRIVATE);
+		SharedPreferences.Editor ed = sp.edit();
+		ed.putString("vpn_site_list", cnf);
+		ed.commit();
+	}
+
+	private Runnable mUpdateConfig = new Runnable() {
+		public void run() {
+			doUpdateConfig();
+		}
+	};
 }
 

@@ -97,7 +97,11 @@ static int _is_dns_mode = 0;
 static sockaddr _sa_router;
 static unsigned char _report_name[8];
 
-static unsigned char TUNNEL_PADDIND_ICMP[16]; // ICMP + TRACK
+static unsigned char TUNNEL_PADDIND_ICMP[16] = {
+	0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+	0xec, 0xec, 0xec, 0xec, 0xec, 0xec, 0xec, 0xec
+}; // ICMP + TRACK
+
 #define LEN_PADDING_ICMP sizeof(TUNNEL_PADDIND_ICMP)
 
 static unsigned char TUNNEL_PADDIND_DNS[] = {
@@ -513,7 +517,7 @@ int main(int argc, char **argv)
 
 int pingle_get_configure(int tunnel, char *buf, size_t size)
 {
-	static char conf[] = {"m,1280 d,114.114.114.114 rL,EXTERNAL a,10.2.0.251,24 c,2ae8944a.0805159c @,625558ec "};
+	static char conf[] = {"m,1280 d,114.114.114.114 a,10.2.0.251,24 a,2002:c0a8::2,3 r,::,0 rL,EXTERNAL c,2ae8944a.0805159c @,625558ec "};
 	strncpy(buf, conf, size);
 	return sizeof(conf) - 1;
 }

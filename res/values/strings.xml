@@ -27,5 +27,16 @@
     <string name="connected">ToyVPN is connected!</string>
     <string name="disconnected">ToyVPN is disconnected!</string>
     <string name="apn_settings">ToyVPN</string>
+    <string name="menu_restore">config</string>
     <string name="permission_deny">This device must be root, otherwise could not create ping socket</string>
+
+	<string-array name="vpn_site_list">
+		<item>Los Angeles(RAW):wall.cybersky.club:RAW,secret=hello</item>
+		<item>Los Angeles(UDP):wall.cybersky.club:UDP,port=53,secret=hello</item>
+		<item>China (RAW):yun.cybersky.club:RAW,secret=hello</item>
+		<item>China (UDP):yun.cybersky.club:UDP,port=53,secret=hello</item>
+		<item>Los Angeles(RAW):www.cybersky.club:RAW,secret=hello</item>
+		<item>Los Angeles(UDP):www.cybersky.club:UDP,port=53,secret=hello</item>
+	</string-array>
+
 </resources>
