@@ -105,15 +105,9 @@ static unsigned char TUNNEL_PADDIND_ICMP[16] = {
 #define LEN_PADDING_ICMP sizeof(TUNNEL_PADDIND_ICMP)
 
 static unsigned char TUNNEL_PADDIND_DNS[] = {
-#if 0
 	0x20, 0x88, 0x81, 0x80, 0x00, 0x01, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x04, 0x77, 0x77, 0x77,
 	0x77, 0x00, 0x00, 0x01, 0x00, 0x01
-#else
-	0x20, 0x88, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x04, 0x77, 0x77, 0x77,
-	0x77, 0x00, 0x00, 0x01, 0x00, 0x01
-#endif
 };
 #define LEN_PADDING_DNS sizeof(TUNNEL_PADDIND_DNS)
 
@@ -188,6 +182,7 @@ int parse_sockaddr_in(struct sockaddr_in *info, const char *address)
 static int get_tunnel(struct sockaddr_in *addrp)
 {
     int error;
+    int bufsiz = 512 * 1024;
 
 	// We use an IPv6 socket to cover both IPv4 and IPv6.
 #ifndef USE_DNS_MODE
@@ -197,7 +192,12 @@ static int get_tunnel(struct sockaddr_in *addrp)
 #endif
 	assert(tunnel != -1);
 
-	error = bind(tunnel, (struct sockaddr *)addrp, sizeof(*addrp));
+#if 0
+    error = setsockopt(tunnel, SOL_SOCKET, SO_SNDBUF, (char *)&bufsiz, sizeof(bufsiz));
+    error = setsockopt(tunnel, SOL_SOCKET, SO_RCVBUF, (char *)&bufsiz, sizeof(bufsiz));
+#endif
+
+    error = bind(tunnel, (struct sockaddr *)addrp, sizeof(*addrp));
     fprintf(stderr, "bind to %s\n", inet_ntoa(addrp->sin_addr));
     assert(error == 0);
 
@@ -583,6 +583,7 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 
 		if (count == 0) {
 			fprintf(stderr, "timeout\n");
+			tcpup_do_keepalive(vpn_output, tunnel, 0);
 			continue;
 		}
 
@@ -698,6 +699,8 @@ int pingle_set_dnsmode(int on)
 		return 0;
 	}
 
+	TUNNEL_PADDIND_DNS[2] &= ~0x80;
+	TUNNEL_PADDIND_DNS[3] &= ~0x80;
 	TUNNEL_PADDIND = TUNNEL_PADDIND_DNS;
 	LEN_PADDING = LEN_PADDING_DNS;
 	_is_dns_mode = 1;
@@ -706,14 +709,22 @@ int pingle_set_dnsmode(int on)
 
 int pingle_open(void)
 {
-    int tunnel;
+	int tunnel;
+	int bufsiz = 512 * 1024;
 
-    // We use an IPv6 socket to cover both IPv4 and IPv6.
+	// We use an IPv6 socket to cover both IPv4 and IPv6.
 	if (_is_dns_mode == 0) {
 		tunnel = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
 	} else {
 		tunnel = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	}
+
+#if 0
+	if (tunnel != -1) {
+		setsockopt(tunnel, SOL_SOCKET, SO_SNDBUF, (char *)&bufsiz, sizeof(bufsiz));
+		setsockopt(tunnel, SOL_SOCKET, SO_RCVBUF, (char *)&bufsiz, sizeof(bufsiz));
+	}
+#endif
 
 	return tunnel;
 }

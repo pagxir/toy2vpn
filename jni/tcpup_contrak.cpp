@@ -46,6 +46,9 @@ struct tcpup_info {
 	tcp_seq ts_mark;
 
 	struct tcpup_info *next;
+
+	int last_rcvcnt;
+	struct tcpuphdr savl;
 };
 
 static int _tot_tcp = 0;
@@ -393,6 +396,7 @@ static tcpup_info *tcpup_newcb(int src, int dst, u_short sport, u_short dport)
 	up->t_mrked = 0;
 	up->ts_mark = 0;
 	up->t_xdat1 = rand();
+	up->last_rcvcnt = 0;
 
 	up->next = _tcpup_info_header;
 	_tcpup_info_header = up;
@@ -482,6 +486,8 @@ static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, stru
 		field->th_win = htons(win >> 7);
 	}
 
+	memcpy(&info->savl, field, sizeof(*field));
+
 	offup = tcpup_addoptions(&to, dst);
 	field->th_opten = (offup >> 2);
 
@@ -493,7 +499,7 @@ static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, stru
 	return cnt + sizeof(*field) + offup;
 }
 
-static int translate_tcpup(struct tcpiphdr *tcp, struct tcpuphdr *field, int length)
+static int translate_tcpup(struct tcpup_info *upp, struct tcpiphdr *tcp, struct tcpuphdr *field, int length)
 {
 	int cnt;
 	int offip, offup;
@@ -528,6 +534,7 @@ static int translate_tcpup(struct tcpiphdr *tcp, struct tcpuphdr *field, int len
 	cnt = length - offup;
 	assert(cnt >= 0);
 	memcpy(dst + offip, ((char *)field) + offup, cnt);
+	upp->last_rcvcnt = cnt;
 
 	return cnt + sizeof(*tcp) + offip;
 }
@@ -793,12 +800,14 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 	if (upp->t_mrked &&
 			SEQ_GEQ(htonl(field->th_tsecr), upp->ts_mark)) {
 		t_xdat = upp->t_xdat;
+#if 1
 		upp->t_xdat = upp->t_xdat1;
 		upp->t_xdat1 = t_xdat;
+#endif
 		upp->t_mrked = 0;
 	}
 
-	offset = translate_tcpup(tcp, field, length);
+	offset = translate_tcpup(upp, tcp, field, length);
 
 	tcp->th_dport = upp->s_port;
 	tcp->th_sport = upp->d_port;
@@ -815,4 +824,27 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 
 	tcpup_state_receive(upp, tcp, offset - (tcp->th_off << 2));
 	return (unsigned char *)tcp + offset - buf;
+}
+
+int tcpup_do_keepalive(tcpup_out_f *output, int tunnel, int xdat)
+{
+	char buf[1500];
+	struct tcpuphdr *tcp;
+	struct tcpup_info *tp;
+
+	for (tp = _tcpup_info_header; tp; tp = tp->next) {
+		if (tp->last_rcvcnt > 0 &&
+				tp->snd_max == tp->snd_una &&
+				tp->t_rcvtime + 500 < ts_get_ticks()) {
+			tcp = &tp->savl;
+			tcp->th_opten = 0;
+			tcp_seq tsval = htonl(tcp->th_tsval);
+			tcp->th_tsval = htonl(tsval + 1); 
+
+			memcpy(buf, &tp->savl, sizeof(*tcp));
+			output(tunnel, buf, sizeof(*tcp), xdat);
+		}
+	}
+
+	return 0;
 }
