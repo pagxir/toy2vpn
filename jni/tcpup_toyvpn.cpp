@@ -25,6 +25,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <android/log.h>
 
 #include <time.h>
 #include <errno.h>
@@ -517,7 +518,7 @@ int main(int argc, char **argv)
 
 int pingle_get_configure(int tunnel, char *buf, size_t size)
 {
-	static char conf[] = {"m,1280 d,114.114.114.114 a,10.2.0.251,24 a,2002:c0a8::2,3 r,::,0 rL,EXTERNAL c,2ae8944a.0805159c @,625558ec "};
+	static char conf[] = {"m,1280 d,114.114.114.114 a,10.2.0.15,24 a,2002:c0a8::2,100 r,::,0 rL,EXTERNAL c,2ae8944a.0805159c @,625558ec "};
 	strncpy(buf, conf, size);
 	return sizeof(conf) - 1;
 }
@@ -583,7 +584,8 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 
 		if (count == 0) {
 			fprintf(stderr, "timeout\n");
-			tcpup_do_keepalive(vpn_output, tunnel, 0);
+			int count = tcpup_do_keepalive(vpn_output, tunnel, 0);
+			 __android_log_print(ANDROID_LOG_INFO, "TOYVPN-JNI", "timeout %x", count);
 			continue;
 		}
 

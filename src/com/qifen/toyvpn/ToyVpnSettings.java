@@ -99,6 +99,8 @@ public class ToyVpnSettings extends PreferenceActivity
 		fillList();
     }
 
+	private String mDeviceConfig = null;
+
     private void fillList() {
         PreferenceGroup apnList = (PreferenceGroup) findPreference("apn_list");
         apnList.removeAll();
@@ -113,6 +115,9 @@ public class ToyVpnSettings extends PreferenceActivity
 		if (saves.length > 1) {
 			items = saves;
 		}
+
+		String defaultConfig = res.getString(R.string.vpn_device_config);
+		mDeviceConfig = sp.getString("vpn_device_config", defaultConfig);
 
         for (String item: items) {
             String key = item;
@@ -163,6 +168,8 @@ public class ToyVpnSettings extends PreferenceActivity
 						}
 					}
 				}
+
+				intent.putExtra(prefix + ".CONFIG", mDeviceConfig);
 
 				startService(intent);
 				Log.d("ToyVPN", "onActivityResult " + selectKey);
@@ -215,8 +222,8 @@ public class ToyVpnSettings extends PreferenceActivity
 
     @Override
     public boolean onPreferenceTreeClick(PreferenceScreen preferenceScreen, Preference preference) {
-	Log.d("ToyVPN", "onPreferenceTreeClick");
-        return true;
+		Log.d("ToyVPN", "onPreferenceTreeClick");
+		return true;
     }
 
     public boolean onPreferenceChange(Preference preference, Object newValue) {
@@ -224,24 +231,35 @@ public class ToyVpnSettings extends PreferenceActivity
 		return true;
 	}
 
-	public void doUpdateConfig() {
+	private String getHTTPContent(String url) throws IOException {
 		String cnf = "";
-		String url = "http://www.9zai.net/downloads/upn.conf";
 
+		URLConnection conn = new URL(url).openConnection();
+		Scanner scanner = new Scanner(conn.getInputStream(), "UTF-8");
+		cnf = scanner.useDelimiter("\\A").next();
+		scanner.close();
+
+		return cnf;
+	}
+
+	private void setPreferenceConfig(String key, String value) {
+		SharedPreferences sp = getSharedPreferences("ubn_conf", Context.MODE_PRIVATE);
+		SharedPreferences.Editor ed = sp.edit();
+		ed.putString(key, value);
+		ed.commit();
+	}
+
+	public void doUpdateConfig() {
 		try {
-			URLConnection conn = new URL(url).openConnection();
-			Scanner scanner = new Scanner(conn.getInputStream(), "UTF-8");
-			cnf = scanner.useDelimiter("\\A").next();
-			scanner.close();
+			String vpnSiteList = getHTTPContent("http://www.9zai.net/downloads/upn.conf");
+			setPreferenceConfig("vpn_site_list", vpnSiteList);
+
+			String vpnDeviceConfig = getHTTPContent("http://www.9zai.net/downloads/tun.conf");
+			setPreferenceConfig("vpn_device_config", vpnDeviceConfig);
 		} catch (IOException e) {
 			// e.printStack();
 			return;
 		}
-
-		SharedPreferences sp = getSharedPreferences("ubn_conf", Context.MODE_PRIVATE);
-		SharedPreferences.Editor ed = sp.edit();
-		ed.putString("vpn_site_list", cnf);
-		ed.commit();
 	}
 
 	private Runnable mUpdateConfig = new Runnable() {

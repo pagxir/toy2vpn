@@ -9,6 +9,7 @@
 
 #include <time.h>
 #include <assert.h>
+#include <android/log.h>
 
 #include "tcpup/up.h"
 #include "tcpup/ip.h"
@@ -486,8 +487,6 @@ static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, stru
 		field->th_win = htons(win >> 7);
 	}
 
-	memcpy(&info->savl, field, sizeof(*field));
-
 	offup = tcpup_addoptions(&to, dst);
 	field->th_opten = (offup >> 2);
 
@@ -534,7 +533,11 @@ static int translate_tcpup(struct tcpup_info *upp, struct tcpiphdr *tcp, struct 
 	cnt = length - offup;
 	assert(cnt >= 0);
 	memcpy(dst + offip, ((char *)field) + offup, cnt);
-	upp->last_rcvcnt = cnt;
+
+	if ((cnt > 0) || 
+			(tcp->th_flags & TH_PUSH)) {
+		upp->last_rcvcnt = cnt;
+	}
 
 	return cnt + sizeof(*tcp) + offip;
 }
@@ -609,14 +612,17 @@ int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size
 	struct tcpuphdr *uphdr = (struct tcpuphdr *)buf;
 	if (upp->snd_una == upp->snd_max) {
 		long ticks = ts_get_ticks();
-		if (ticks > upp->t_rcvtime + second2ticks(4)/10) {
+#if 0
+		if (ticks > upp->t_rcvtime + second2ticks(5)/10) {
 			upp->t_xdat = rand();
 			upp->t_xdat1 = rand();
 		}
+#endif
 	}
 
 	offset = translate_tcpip(upp, uphdr, tcp, packet + length - (unsigned char *)tcp);
 	uphdr->th_conv = upp->t_conv;
+	memcpy(&upp->savl, uphdr, sizeof(*uphdr));
 
 	*pxdat = upp->t_xdat;
 	return offset;
@@ -828,23 +834,39 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 
 int tcpup_do_keepalive(tcpup_out_f *output, int tunnel, int xdat)
 {
+	int c1, c2;
 	char buf[1500];
 	struct tcpuphdr *tcp;
 	struct tcpup_info *tp;
 
+	c1 = c2 = 0;
 	for (tp = _tcpup_info_header; tp; tp = tp->next) {
 		if (tp->last_rcvcnt > 0 &&
 				tp->snd_max == tp->snd_una &&
-				tp->t_rcvtime + 500 < ts_get_ticks()) {
+				tp->t_rcvtime + 500 < ts_get_ticks() &&
+				tp->t_rcvtime + 20000 > ts_get_ticks()) {
 			tcp = &tp->savl;
 			tcp->th_opten = 0;
 			tcp_seq tsval = htonl(tcp->th_tsval);
 			tcp->th_tsval = htonl(tsval + 1); 
 
 			memcpy(buf, &tp->savl, sizeof(*tcp));
+			tcp = (struct tcpuphdr *)buf;
+			if (tcp->th_flags & (TH_SYN|TH_FIN|TH_RST)) continue;
+
+			tcp->th_seq = htonl(tp->snd_una - 1);
+			__android_log_print(ANDROID_LOG_INFO, "TOYVPN-JNI", "keepalive %x %d", tcp->th_conv, ts_get_ticks() - tp->t_rcvtime);
+#if 0
+			if (tp->t_rcvtime + 1000 < ts_get_ticks())
+				tp->t_xdat = rand();
+#endif
+
+			xdat = tp->t_xdat;
 			output(tunnel, buf, sizeof(*tcp), xdat);
+			c2++;
 		}
+		c1++;
 	}
 
-	return 0;
+	return (c1 << 16) | c2;
 }

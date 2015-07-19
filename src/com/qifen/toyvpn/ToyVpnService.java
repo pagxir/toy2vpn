@@ -36,6 +36,7 @@ import android.util.Log;
 import android.widget.Toast;
 import android.content.IntentFilter;
 
+import java.io.IOException;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.net.SocketAddress;
@@ -55,6 +56,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
     private String mServerAddress;
     private String mServerPort;
     private String mSharedSecret;
+	private String mDeviceConfig;
     private PendingIntent mConfigureIntent;
 
     private Thread mThread;
@@ -123,6 +125,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         mServerAddress = intent.getStringExtra(prefix + ".ADDRESS");
         mServerPort = intent.getStringExtra(prefix + ".PORT");
         mSharedSecret = intent.getStringExtra(prefix + ".SECRET");
+        mDeviceConfig = intent.getStringExtra(prefix + ".CONFIG");
 
 		if (intent.getBooleanExtra("TEARDOWN", false) && mThread != null) {
             mStarted = false;
@@ -197,19 +200,25 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
 	}
 
 	private Runnable mDataStallAvoid = new Runnable() {
+		private void httpTryNativeConnect(String server) throws IOException {
+			SocketChannel socketChannel = SocketChannel.open();
+			socketChannel.configureBlocking(false);
+			if (!protect(socketChannel.socket())) throw new IOException("protect data stall tcp socket failure");
+			socketChannel.connect(new InetSocketAddress(server, 80));
+			socketChannel.close();
+		}
+
 		@Override
 		public void run() {
 			try {
-				SocketChannel socketChannel = SocketChannel.open();
-				socketChannel.configureBlocking(false);
-				if (!protect(socketChannel.socket())) throw new IllegalStateException("protect data stall tcp socket failure");
-				//socketChannel.connect(new InetSocketAddress("www.baidu.com", 80));
-				socketChannel.connect(new InetSocketAddress("115.239.210.25", 80));
-				socketChannel.close();
-			} catch (Exception e) {
+				httpTryNativeConnect("www.163.com");
+				httpTryNativeConnect(mServerAddress);
+			} catch (IllegalArgumentException e) {
+				Log.d(TAG, "doDataStallAvoid failure IllegalArgumentException ");
+				e.printStackTrace();
+			} catch (IOException e) {
 				Log.d(TAG, "doDataStallAvoid failure ");
 				e.printStackTrace();
-				throw new RuntimeException(e);
 			}
 			return;
 		}
@@ -317,7 +326,7 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         	tunnelDevice.setSecret(mSharedSecret);
 			tunnelDevice.setServer(server);
 
-            handshake(tunnel);
+			configure(mDeviceConfig);
 
             connected = true;
 			Message msg = mHandler.obtainMessage(EVENT_SHOW_MESSAGE, 0x00, R.string.connected);
@@ -343,23 +352,6 @@ public class ToyVpnService extends VpnService implements Handler.Callback, Runna
         }
 
         return connected;
-    }
-
-    private void handshake(PingTunnel tunnel) throws Exception {
-        for (int i = 0; i < 2; ++i) {
-            tunnelDevice.doHandshake(tunnel.getFd());
-        }
-
-        byte[] data = tunnelDevice.getConfigure(tunnel.getFd());
-
-        if (data != null) {
-            Log.e(TAG, "handshake " + data.length);
-            configure(new String(data));
-            return;
-        }
-
-        Log.e(TAG, "timeout handshake");
-        throw new IllegalStateException("Timed out");
     }
 
     int _net_count = 0;
