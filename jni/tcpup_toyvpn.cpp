@@ -25,7 +25,9 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifdef __ANDROID__
 #include <android/log.h>
+#endif
 
 #include <time.h>
 #include <errno.h>
@@ -585,7 +587,9 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 		if (count == 0) {
 			fprintf(stderr, "timeout\n");
 			int count = tcpup_do_keepalive(vpn_output, tunnel, 0);
+#ifdef __ANDROID__
 			 __android_log_print(ANDROID_LOG_INFO, "TOYVPN-JNI", "timeout %x", count);
+#endif
 			continue;
 		}
 

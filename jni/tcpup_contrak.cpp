@@ -9,7 +9,9 @@
 
 #include <time.h>
 #include <assert.h>
+#ifdef __ANDROID__
 #include <android/log.h>
+#endif
 
 #include "tcpup/up.h"
 #include "tcpup/ip.h"
@@ -855,7 +857,9 @@ int tcpup_do_keepalive(tcpup_out_f *output, int tunnel, int xdat)
 			if (tcp->th_flags & (TH_SYN|TH_FIN|TH_RST)) continue;
 
 			tcp->th_seq = htonl(tp->snd_una - 1);
+#ifdef __ANDROID__
 			__android_log_print(ANDROID_LOG_INFO, "TOYVPN-JNI", "keepalive %x %d", tcp->th_conv, ts_get_ticks() - tp->t_rcvtime);
+#endif
 #if 0
 			if (tp->t_rcvtime + 1000 < ts_get_ticks())
 				tp->t_xdat = rand();

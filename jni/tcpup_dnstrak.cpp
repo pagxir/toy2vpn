@@ -24,7 +24,7 @@ int get_tunnel_udp(struct sockaddr_in *addrp)
 	int tunnel = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	assert(tunnel != -1);
 
-#if 0
+#ifdef __ANDROID__
 	error = setsockopt(tunnel, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
     assert(error == 0);
 #endif
