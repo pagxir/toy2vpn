@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <netinet/ip6.h>
 #include <netinet/udp.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -36,6 +37,130 @@ int get_tunnel_udp(struct sockaddr_in *addrp)
 	return tunnel;
 }
 
+struct udpuphdr {
+	int u_conv;
+
+	u_char	u_flag;
+	u_char	u_magic;
+
+	u_char	u_frag;
+	u_char	u_doff;
+};
+
+struct udpuphdr4 {
+	struct udpuphdr uh;
+	u_char tag;
+	u_char len;
+	u_short port;
+	u_int addr[1];
+};
+
+struct udpuphdr6 {
+	struct udpuphdr uh;
+	u_char tag;
+	u_char len;
+	u_short port;
+	u_int addr[4];
+};
+
+struct udpup_info {
+	int is_ipv6;
+	int u_conv;
+	int u_port;
+	long u_rcvtime;
+
+	union {
+		struct in_addr in;
+		struct in6_addr in6;
+	} from;
+
+	struct udpup_info *next;
+};
+
+static struct udpup_info *_udpup_info_header = NULL;
+
+
+static int _uot_udp = 0;
+static int _uot_pid = 0;
+static int _uot_inc = 0;
+extern long ts_get_ticks();
+
+static int upid_gen()
+{
+    if (_uot_pid == 0)
+        _uot_pid = (ts_get_ticks() << 24);
+
+    return _uot_pid | (_uot_inc++ & 0xff) | (random() & 0xffff) << 8;
+}
+
+struct udpup_info * udpinfo_lookup(int conv)
+{
+	struct udpup_info *up;
+
+	for (up = _udpup_info_header; up != NULL; up = up->next) {
+		if (up->u_conv == conv) return up;
+	}
+
+	return NULL;
+}
+
+struct udpup_info * udpinfo_create(int ipv6, const void *local, int sport)
+{
+	struct udpup_info *up;
+	struct udpup_info *next;
+	struct udpup_info **pprev;
+	long current = ts_get_ticks();
+
+	pprev = &_udpup_info_header;
+	for (up = _udpup_info_header; up != NULL; up = next) {
+		next = up->next;
+
+		if (up->u_rcvtime + 15000 < current) {
+			*pprev = up->next;
+			_uot_udp--;
+			delete up;
+			continue;
+		}
+
+		if (up->u_port != sport) {
+			pprev = &up->next;
+			continue;
+		}
+
+		if (ipv6 && memcmp(&up->from.in6, local, 16)) {
+			pprev = &up->next;
+			continue;
+		}
+
+		if (!ipv6 && memcmp(&up->from.in, local, 4)) {
+			pprev = &up->next;
+			continue;
+		}
+
+		return up;
+	}
+
+	up = new udpup_info;
+	if (up != NULL) {
+		up->u_conv = upid_gen();
+		up->is_ipv6 = ipv6;
+		up->u_port = sport;
+		up->u_rcvtime = current;
+
+		if (ipv6) {
+			memcpy(&up->from.in6, local, 16);
+		} else {
+			memcpy(&up->from.in, local, 4);
+		}
+
+		up->next = _udpup_info_header;
+		_udpup_info_header = up;
+		_uot_udp++;
+	}
+
+	return up;
+}
+
 struct dns_query_packet {
 	unsigned short q_ident;
 	unsigned short q_flags;
@@ -62,6 +187,54 @@ static struct cached_client {
 } __cached_client[512];
 
 static int __last_index = 0;
+int resolved_udp_packet(void *buf, const void *packet, size_t length, struct sockaddr_in *from)
+{
+	struct iphdr *ip;
+	struct udphdr *udp;
+
+	struct udpuphdr *puhdr;
+	struct udpuphdr6 *puhdr6;
+
+	puhdr = (struct udpuphdr *)packet;
+	if (puhdr->u_flag == 0 && puhdr->u_magic == 0xcc && puhdr->u_frag == 0) {
+		ip = (struct iphdr *)buf;
+		udp = (struct udphdr *)(ip + 1);
+
+		int doff = (puhdr->u_doff << 2);
+		struct udpuphdr4 *puhdr4 = (struct udpuphdr4 *)puhdr;
+		struct udpup_info *info = udpinfo_lookup(puhdr->u_conv);
+
+		if (info != NULL && doff < length && info->is_ipv6 == 0) {
+			memcpy(udp + 1, (char *)packet + doff, length - doff);
+			length -= doff;
+
+			udp->len = htons(length + sizeof(*udp));
+			udp->check = 0;
+			udp->source = puhdr4->port;
+			udp->dest   = info->u_port;
+			udp_checksum(&udp->check, (in_addr *)&puhdr4->addr[0],
+					&info->from.in, udp, length + sizeof(*udp));
+
+			ip->ihl = 5;
+			ip->version = 4;
+			ip->tos = 0;
+			ip->tot_len = htons(length + (char *)(udp + 1) - (char *)buf);
+			ip->id  = (0xffff & (long)ip);
+			ip->frag_off = htons(0x4000);
+			ip->ttl = 8;
+			ip->protocol = IPPROTO_UDP;
+			ip->check = 0;
+
+			ip->saddr = puhdr4->addr[0];
+			ip->daddr = info->from.in.s_addr;
+			ip_checksum(&ip->check, ip, sizeof(*ip));
+
+			return length + (char *)(udp + 1) - (char *)buf;
+		}
+	}
+
+	return 0;
+}
 
 int resolved_dns_packet(void *buf, const void *packet, size_t length, struct sockaddr_in *from)
 {
@@ -127,26 +300,6 @@ int record_dns_packet(void *packet, size_t length, struct sockaddr_in *from, str
 	flags = ntohs(dnsp->q_flags);
 
 	if (flags & 0x8000) {
-#if 0
-		/* from dns server */;
-		int ident = htons(dnsp->q_ident);
-		int index = (ident & 0x1FF);
-
-		client = &__cached_client[index];
-		if (client->flags == 1 &&
-				client->r_ident == ident) {
-			int error;
-			char bufout[8192];
-
-			client->flags = 0;
-			if (!client->don2p) {
-				dnsp->q_ident = htons(client->l_ident);
-				err = sendto(up->sockfd, buf, count, 0, &client->from.sa, sizeof(client->from));
-				fprintf(stderr, "sendto client %d/%d\n", err, errno);
-				return 0;
-			}
-		}
-#endif
 		return 0;
 	}
 
@@ -199,40 +352,114 @@ int send_out_ip2udp(int lowfd, unsigned char *packet, size_t length)
 	return 0;
 }
 
-int fill_out_ip2udp(char *buf, unsigned char *packet, size_t length)
+int fill_out_ip2udp(char *buf, unsigned char *packet, size_t length, unsigned int *pmagic)
 {
 	int len, err;
+	int is_ipv6 = 1;
 	socklen_t ttl;
+
 	struct iphdr *ip;
+	struct ip6_hdr *ip6;
+
 	struct udphdr *udp;
 	struct sockaddr_in sa, da;
+	struct udpup_info *info = NULL;
 
 	ip = (struct iphdr *)packet;
-	if (ip->protocol == IPPROTO_UDP) {
-		udp = (struct udphdr *)(ip + 1);
-		if (udp->dest == htons(53)) {
-			sa.sin_family = AF_INET;
-			sa.sin_port   = udp->source;
-			sa.sin_addr.s_addr = ip->saddr;
-
-			da.sin_family = AF_INET;
-			da.sin_port   = udp->dest;
-			da.sin_addr.s_addr = ip->daddr;
-
-			len = packet + length - (unsigned char *)(udp + 1);
-			if (ip->ttl > 1 && record_dns_packet(udp + 1, len, &sa, &da)) {
-#if 0
-				sa.sin_port   = udp->dest;
-				sa.sin_addr.s_addr = ip->daddr;
-				ttl = (ip->ttl - 1);
-				err = setsockopt(lowfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
-
-				err = sendto(lowfd, udp + 1, len, 0, (struct sockaddr *)&sa, sizeof(sa));
-				return 1;
-#endif
-				memcpy(buf, udp + 1, len);
-				return len;
+	switch (ip->version) {
+		case 0x06:
+			ip6 = (struct ip6_hdr *)ip;
+			udp = (struct udphdr *)(ip6 + 1);
+			if (ip6->ip6_ctlun.ip6_un1.ip6_un1_nxt != IPPROTO_UDP) {
+				return 0;
 			}
+
+			break;
+
+		case 0x04:
+			/* version 4 */
+			is_ipv6 = 0;
+			udp = (struct udphdr *)(ip + 1);
+			if (ip->protocol != IPPROTO_UDP) {
+				return 0;
+			}
+
+			break;
+
+		default:
+			return 0;
+	}
+
+	if (is_ipv6 == 0 && udp->dest == htons(53)) {
+		sa.sin_family = AF_INET;
+		sa.sin_port   = udp->source;
+		sa.sin_addr.s_addr = ip->saddr;
+
+		da.sin_family = AF_INET;
+		da.sin_port   = udp->dest;
+		da.sin_addr.s_addr = ip->daddr;
+
+		len = packet + length - (unsigned char *)(udp + 1);
+		if (ip->ttl > 1 && record_dns_packet(udp + 1, len, &sa, &da)) {
+#if 0
+			sa.sin_port   = udp->dest;
+			sa.sin_addr.s_addr = ip->daddr;
+			ttl = (ip->ttl - 1);
+			err = setsockopt(lowfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+
+			err = sendto(lowfd, udp + 1, len, 0, (struct sockaddr *)&sa, sizeof(sa));
+			return 1;
+#endif
+			*pmagic = htonl(0xfe800000);
+			memcpy(buf, udp + 1, len);
+			return len;
+		}
+	} else {
+		struct udpuphdr *puhdr;
+		struct udpuphdr4 *puhdr4;
+		struct udpuphdr6 *puhdr6;
+
+		puhdr = (struct udpuphdr *)buf;
+		puhdr->u_conv = 0xf6e7d8c9;
+		puhdr->u_flag = 0;
+		puhdr->u_magic = 0xCC;
+		puhdr->u_frag = 0;
+		puhdr->u_doff = (sizeof(*puhdr) >> 2);
+
+		len = packet + length - (unsigned char *)(udp + 1);
+
+		if (is_ipv6) {
+			info = udpinfo_create(is_ipv6, &ip6->ip6_src, udp->source);
+			if (info == NULL) return 0;
+
+			puhdr6 = (struct udpuphdr6 *)buf;
+			puhdr->u_doff = (sizeof(*puhdr6) >> 2);
+			memcpy(puhdr6->addr, &ip6->ip6_dst, 16);
+			puhdr6->port = udp->dest;
+			puhdr6->tag  = 0x86;
+			puhdr6->len  = 20;
+			puhdr6->uh.u_conv = info->u_conv;
+			info->u_rcvtime = ts_get_ticks();
+
+			memcpy(puhdr6 + 1, udp + 1, len);
+			*pmagic = htonl(0xfe800001);
+			return len + sizeof(*puhdr6);
+		} else {
+			info = udpinfo_create(is_ipv6, &ip->saddr, udp->source);
+			if (info == NULL) return 0;
+
+			puhdr4 = (struct udpuphdr4 *)buf;
+			puhdr->u_doff = (sizeof(*puhdr4) >> 2);
+			memcpy(puhdr4->addr, &ip->daddr, 4);
+			puhdr4->port = udp->dest;
+			puhdr4->tag  = 0x84;
+			puhdr4->len  = 8;
+			puhdr4->uh.u_conv = info->u_conv;
+			info->u_rcvtime = ts_get_ticks();
+
+			memcpy(puhdr4 + 1, udp + 1, len);
+			*pmagic = htonl(0xfe800001);
+			return len + sizeof(*puhdr4);
 		}
 	}
 

@@ -65,7 +65,7 @@ static char const * const tcpstates[] = {
 	"LAST_ACK",     "FIN_WAIT_2",   "TIME_WAIT",
 };
 
-static long ts_get_ticks(void)
+long ts_get_ticks(void)
 {
 	int error;
 	struct timespec t0;
@@ -807,10 +807,12 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 	int t_xdat;
 	if (upp->t_mrked &&
 			SEQ_GEQ(htonl(field->th_tsecr), upp->ts_mark)) {
-		t_xdat = upp->t_xdat;
 #if 1
-		upp->t_xdat = upp->t_xdat1;
-		upp->t_xdat1 = t_xdat;
+		if (upp->last_rcvcnt > 0) {
+			t_xdat = upp->t_xdat;
+			upp->t_xdat = upp->t_xdat1;
+			upp->t_xdat1 = t_xdat;
+		}
 #endif
 		upp->t_mrked = 0;
 	}

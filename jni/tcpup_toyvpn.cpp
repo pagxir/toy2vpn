@@ -282,13 +282,8 @@ static void usage(const char *prog_name)
     return;
 }
 
-#define DNS_MAGIC_LEN 24
-static unsigned char dns_magic[DNS_MAGIC_LEN] = {
-	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-};
-
+#define DNS_MAGIC_LEN 4
+static unsigned int dns_magic = 0xfe800001;
 
 int main(int argc, char **argv)
 {
@@ -423,8 +418,12 @@ int main(int argc, char **argv)
 								static u_char plain[1500];
 								packet_decrypt(key, plain, adj, len);
 
-								int len1 = 0;
-								if (length >= 12 + DNS_MAGIC_LEN && 0 == memcmp(plain, dns_magic, DNS_MAGIC_LEN)) {
+								int len1 = 0, magic = 0;
+								memcpy(&magic, plain, DNS_MAGIC_LEN);
+								if (len > DNS_MAGIC_LEN && magic == htonl(0xfe800001)) {
+									int newlen = resolved_udp_packet(buf, plain + DNS_MAGIC_LEN, len - DNS_MAGIC_LEN, (struct sockaddr_in *)&from);
+									if (newlen > 12) len1 = newlen;
+								} else if (len > DNS_MAGIC_LEN && magic == htonl(0xfe800000)) {
 									int newlen = resolved_dns_packet(buf, plain + DNS_MAGIC_LEN, len - DNS_MAGIC_LEN, (struct sockaddr_in *)&from);
 									if (newlen > 12) len1 = newlen;
 								} else {
@@ -474,10 +473,11 @@ int main(int argc, char **argv)
 						interface_prepare = 0;
 
 						if (length > (int)sizeof(struct ipv4_header)) {
-							int newlen = fill_out_ip2udp((char *)(buf + 24), packet, length);
+							unsigned int magic = 0;
+							int newlen = fill_out_ip2udp((char *)(buf + DNS_MAGIC_LEN), packet, length, &magic);
 
 							if (newlen > 12) {
-								memcpy(buf, dns_magic, DNS_MAGIC_LEN);
+								memcpy(buf, &magic, DNS_MAGIC_LEN);
 								length = newlen + DNS_MAGIC_LEN;
 							} else {
 								/* should be an tcp packet, so do traslate now. */
@@ -615,8 +615,13 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 						static u_char plain[1500];
 						packet_decrypt(key, plain, adj, len);
 
-						int len1 = 0;
-						if (length >= 12 + DNS_MAGIC_LEN && 0 == memcmp(plain, dns_magic, DNS_MAGIC_LEN)) {
+
+						int len1 = 0, magic = 0;
+						memcpy(&magic, plain, DNS_MAGIC_LEN);
+						if (length > DNS_MAGIC_LEN && magic == htonl(0xfe800001)) {
+							int newlen = resolved_udp_packet(buf, plain + DNS_MAGIC_LEN, len - DNS_MAGIC_LEN, (struct sockaddr_in *)&from);
+							if (newlen > 12) len1 = newlen;
+						} else if (length >= 12 + DNS_MAGIC_LEN && magic == htonl(0xfe800000)) {
 							int newlen = resolved_dns_packet(buf, plain + DNS_MAGIC_LEN, len - DNS_MAGIC_LEN, (struct sockaddr_in *)&from);
 							if (newlen > 12) len1 = newlen;
 						} else {
@@ -662,11 +667,12 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 				interface_prepare = 0;
 				if (length > (int)sizeof(struct ipv4_header)) {
 					int xdat = 0;
-					int newlen = fill_out_ip2udp((char *)(buf + 24), packet, length);
+					unsigned int magic = 0;
+					int newlen = fill_out_ip2udp((char *)(buf + DNS_MAGIC_LEN), packet, length, &magic);
 
 					interface_prepare = 1;
 					if (newlen > 12) {
-						memcpy(buf, dns_magic, DNS_MAGIC_LEN);
+						memcpy(buf, &magic, DNS_MAGIC_LEN);
 						length = newlen + DNS_MAGIC_LEN;
 					} else {
 						/* should be an tcp packet, so do traslate now. */
