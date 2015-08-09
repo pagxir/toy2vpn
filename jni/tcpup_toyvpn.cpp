@@ -188,11 +188,7 @@ static int get_tunnel(struct sockaddr_in *addrp)
     int bufsiz = 512 * 1024;
 
 	// We use an IPv6 socket to cover both IPv4 and IPv6.
-#ifndef USE_DNS_MODE
-	int tunnel = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
-#else
-	int tunnel = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-#endif
+	int tunnel = socket(AF_INET, SOCK_DGRAM, (!_is_dns_mode) * IPPROTO_ICMP);
 	assert(tunnel != -1);
 
 #if 0
@@ -332,6 +328,12 @@ int main(int argc, char **argv)
 	interface = get_interface(tun);
 	run_config_script(tun, script);
     memcpy(&_sa_router, &relay_name, sizeof(relay_name));
+
+	fprintf(stderr, "port %d\n", relay_name.sin_port);
+	if (relay_name.sin_port != 0) {
+		fprintf(stderr, "use dns mode\n");
+		pingle_set_dnsmode(1);
+	}
 
 	do {
 		int maxfd;
@@ -480,8 +482,14 @@ int main(int argc, char **argv)
 								memcpy(buf, &magic, DNS_MAGIC_LEN);
 								length = newlen + DNS_MAGIC_LEN;
 							} else {
-								/* should be an tcp packet, so do traslate now. */
-								length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat);
+								unsigned int *fakeack = 0;
+								length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat, &fakeack);
+								if (fakeack != NULL) {
+									unsigned int savack = *fakeack;
+									*fakeack = htonl(htonl(savack) - 1400);
+									vpn_output(tunnel, buf, length, xdat);
+									*fakeack = savack;
+								}
 							}
 
 							if (length > 0) {
@@ -675,8 +683,14 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 						memcpy(buf, &magic, DNS_MAGIC_LEN);
 						length = newlen + DNS_MAGIC_LEN;
 					} else {
-						/* should be an tcp packet, so do traslate now. */
-						length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat);
+						unsigned int *fakeack = 0;
+						length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat, &fakeack);
+						if (fakeack != NULL) {
+							unsigned int savack = *fakeack;
+							*fakeack = htonl(htonl(savack) - 1400);
+							vpn_output(tunnel, buf, length, xdat);
+							*fakeack = savack;
+						}
 					}
 
 					if (length > 0) {
@@ -721,15 +735,9 @@ int pingle_set_dnsmode(int on)
 
 int pingle_open(void)
 {
-	int tunnel;
 	int bufsiz = 512 * 1024;
 
-	// We use an IPv6 socket to cover both IPv4 and IPv6.
-	if (_is_dns_mode == 0) {
-		tunnel = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
-	} else {
-		tunnel = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	}
+	int tunnel = socket(AF_INET, SOCK_DGRAM, (!_is_dns_mode) * IPPROTO_ICMP);
 
 #if 0
 	if (tunnel != -1) {

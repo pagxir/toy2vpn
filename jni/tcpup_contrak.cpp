@@ -443,7 +443,7 @@ static int set_relay_info(u_char *target, int type, void *host, u_short port)
 	return p - (char *)target;
 }
 
-static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, struct tcpiphdr *tcp, int length)
+static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, struct tcpiphdr *tcp, int length, tcp_seq **fakeack)
 {
 	int cnt;
 	int offip, offup;
@@ -478,10 +478,12 @@ static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, stru
 		field->th_tsval = htonl(to.to_tsval);
 	}
 
+#if 0
 	if (info->t_mrked == 0) {
 		info->ts_mark = htonl(field->th_tsval);
 		info->t_mrked = 1;
 	}
+#endif
 
 	if (info->t_wscale != 7) {
 		/* convert windows scale from old to new */
@@ -495,6 +497,17 @@ static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, stru
 	cnt = length - offip - sizeof(*tcp);
 	assert(cnt >= 0);
 	memcpy(dst + offup, src + offip, cnt);
+
+	int th_ack = htonl(tcp->th_ack);
+
+	if (SEQ_GT(th_ack, info->snd_max)
+			&& cnt == 0 && to.to_nsacks == 0
+			&& (1500 < (int)(th_ack - info->snd_max))) {
+		*fakeack = &tcp->th_ack;
+	} else {
+		*fakeack = 0;
+	}
+
 	tcpup_state_send(info, tcp, cnt);
 
 	return cnt + sizeof(*field) + offup;
@@ -544,7 +557,7 @@ static int translate_tcpup(struct tcpup_info *upp, struct tcpiphdr *tcp, struct 
 	return cnt + sizeof(*tcp) + offip;
 }
 
-int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size_t length, int *pxdat)
+int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size_t length, int *pxdat, tcp_seq **fakeack)
 {
 	int offset;
 	int is_ipv6 = 1;
@@ -612,18 +625,20 @@ int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size
 	}
 
 	struct tcpuphdr *uphdr = (struct tcpuphdr *)buf;
+	offset = translate_tcpip(upp, uphdr, tcp, packet + length - (unsigned char *)tcp, fakeack);
+	uphdr->th_conv = upp->t_conv;
+
 	if (upp->snd_una == upp->snd_max) {
 		long ticks = ts_get_ticks();
-#if 0
 		if (ticks > upp->t_rcvtime + second2ticks(5)/10) {
-			upp->t_xdat = rand();
-			upp->t_xdat1 = rand();
+			if (upp->t_mrked == 0) {
+				upp->ts_mark = htonl(uphdr->th_tsval);
+				upp->t_xdat  = rand();
+				upp->t_mrked = 1;
+			}
 		}
-#endif
 	}
 
-	offset = translate_tcpip(upp, uphdr, tcp, packet + length - (unsigned char *)tcp);
-	uphdr->th_conv = upp->t_conv;
 	memcpy(&upp->savl, uphdr, sizeof(*uphdr));
 
 	*pxdat = upp->t_xdat;
@@ -680,7 +695,7 @@ int tcp_reset_fill(unsigned char *buf, unsigned char *packet, size_t length)
 		ip->tot_len = htons(sizeof(*tcp) + sizeof(*ip));
 		ip->id  = (0xffff & (long)ip);
 		ip->frag_off = htons(0x4000);
-		ip->ttl = 8;
+		ip->ttl = 28;
 		ip->protocol = IPPROTO_TCP;
 		ip->check = 0;
 
@@ -743,6 +758,17 @@ int tcpup_reset_fill(unsigned char *buf, unsigned char *packet, size_t length)
 	return sizeof(*tcp);
 }
 
+struct tcpup_info * tcpup_forward(int conv, struct tcpuphdr *field)
+{
+	struct tcpupopt to = {0};
+
+	int cnt = (field->th_opten << 2);
+	u_char *src = (u_char *)(field + 1);
+	tcpup_dooptions(&to, src, cnt);
+
+	return 0;
+}
+
 int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size_t length)
 {
 	int offset;
@@ -768,10 +794,14 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 			return -1;
 		}
 
-		/* !field->syn */
-		/* silent drop, ignore packet */
-
-		return 0;
+		if (field->th_flags & TH_SYN) {
+			upp = tcpup_forward(field->th_conv, field);
+			if (upp == NULL) return 0;
+		} else {
+			/* !field->syn */
+			/* silent drop, ignore packet */
+			return 0;
+		}
 	}
 
 	if (upp->ip_ver == 0x04) {
@@ -784,7 +814,7 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 		ip->id  = (0xffff & (long)ip);
 		ip->tot_len = htons(sizeof(*tcp) + sizeof(*ip));
 		ip->frag_off = htons(0x4000);
-		ip->ttl = 8;
+		ip->ttl = 28;
 		ip->protocol = IPPROTO_TCP;
 		ip->check = 0;
 
@@ -807,13 +837,6 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 	int t_xdat;
 	if (upp->t_mrked &&
 			SEQ_GEQ(htonl(field->th_tsecr), upp->ts_mark)) {
-#if 1
-		if (upp->last_rcvcnt > 0) {
-			t_xdat = upp->t_xdat;
-			upp->t_xdat = upp->t_xdat1;
-			upp->t_xdat1 = t_xdat;
-		}
-#endif
 		upp->t_mrked = 0;
 	}
 
@@ -862,10 +885,14 @@ int tcpup_do_keepalive(tcpup_out_f *output, int tunnel, int xdat)
 #ifdef __ANDROID__
 			__android_log_print(ANDROID_LOG_INFO, "TOYVPN-JNI", "keepalive %x %d", tcp->th_conv, ts_get_ticks() - tp->t_rcvtime);
 #endif
-#if 0
-			if (tp->t_rcvtime + 1000 < ts_get_ticks())
-				tp->t_xdat = rand();
-#endif
+
+			if (tp->t_rcvtime + 1000 < ts_get_ticks()) {
+				if (tp->t_mrked == 0) {
+					tp->ts_mark = htonl(tcp->th_tsval);
+					tp->t_xdat  = rand();
+					tp->t_mrked = 1;
+				}
+			}
 
 			xdat = tp->t_xdat;
 			output(tunnel, buf, sizeof(*tcp), xdat);
