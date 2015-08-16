@@ -77,6 +77,13 @@ int tcpup_dooptions(struct tcpupopt *to, u_char *cp, int cnt)
 				to->to_flags |= TOF_SACKPERM;
 				break;
 */
+			case TCPOPT_DESTINATION:
+				fprintf(stderr, "TCPOPT_DESTINATION\n");
+				to->to_flags |= TOF_DESTINATION;
+				to->to_dsaddr = cp + 2;
+				to->to_dslen = optlen;
+				break;
+
 			case TCPOPT_SACK:
 				if (optlen <= 2 || (optlen - 2) % TCPOLEN_SACK != 0)
 					continue;

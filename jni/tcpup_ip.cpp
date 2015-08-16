@@ -202,6 +202,9 @@ int tcpip_addoptions(struct tcpupopt *to, u_char *optp)
 				*optp++ = TCPOLEN_SACK_PERMITTED;
 				break;
 
+			case TOF_DESTINATION:
+				break;
+
 			default:
 				/* (0, "unknown TCP option type"); */
 				assert(0);

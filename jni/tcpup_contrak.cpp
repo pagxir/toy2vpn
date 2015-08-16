@@ -760,13 +760,32 @@ int tcpup_reset_fill(unsigned char *buf, unsigned char *packet, size_t length)
 
 struct tcpup_info * tcpup_forward(int conv, struct tcpuphdr *field)
 {
+	u_short port;
+	unsigned daddr;
+
+	struct tcpup_info *up = 0;
 	struct tcpupopt to = {0};
 
 	int cnt = (field->th_opten << 2);
 	u_char *src = (u_char *)(field + 1);
+	fprintf(stderr, "len: %x\n", cnt);
 	tcpup_dooptions(&to, src, cnt);
 
-	return 0;
+	/*
+	 * tcpup_newcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport);
+	 * tcpup_newcb6(ip6->ip6_src, ip6->ip6_dst, tcp->th_sport, tcp->th_dport);
+	 */
+
+	if ((to.to_flags & TOF_DESTINATION) && to.to_dsaddr[0] == 0x01) {
+		memcpy(&port, to.to_dsaddr + 2, 2);
+		memcpy(&daddr, to.to_dsaddr + 4, 4);
+		up = tcpup_newcb(daddr, htonl(0x0A070000 | (conv >> 16)), port, (conv & 0xffff));
+		if (up) up->t_conv = conv;
+	} else {
+		fprintf(stderr, "failure: %d %x %x\n", 999, to.to_flags, to.to_dsaddr? to.to_dsaddr[0]: 0);
+	}
+
+	return up;
 }
 
 int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size_t length)
