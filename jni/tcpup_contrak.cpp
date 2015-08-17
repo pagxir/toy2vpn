@@ -500,10 +500,10 @@ static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, stru
 
 	int th_ack = htonl(tcp->th_ack);
 
-	if (SEQ_GT(th_ack, info->snd_max)
+	if (SEQ_GT(th_ack, info->snd_una)
 			&& cnt == 0 && to.to_nsacks == 0
-			&& (1500 < (int)(th_ack - info->snd_max))) {
-		*fakeack = &tcp->th_ack;
+			&& ((int)(th_ack - info->snd_una) > 1500)) {
+		*fakeack = &field->th_ack;
 	} else {
 		*fakeack = 0;
 	}

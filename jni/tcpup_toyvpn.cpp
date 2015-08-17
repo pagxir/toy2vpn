@@ -484,7 +484,7 @@ int main(int argc, char **argv)
 							} else {
 								unsigned int *fakeack = 0;
 								length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat, &fakeack);
-								if (fakeack != NULL) {
+								if (fakeack != NULL && _is_dns_mode == 0) {
 									unsigned int savack = *fakeack;
 									*fakeack = htonl(htonl(savack) - 1400);
 									vpn_output(tunnel, buf, length, xdat);
