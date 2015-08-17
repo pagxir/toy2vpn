@@ -779,7 +779,7 @@ struct tcpup_info * tcpup_forward(int conv, struct tcpuphdr *field)
 	if ((to.to_flags & TOF_DESTINATION) && to.to_dsaddr[0] == 0x01) {
 		memcpy(&port, to.to_dsaddr + 2, 2);
 		memcpy(&daddr, to.to_dsaddr + 4, 4);
-		up = tcpup_newcb(daddr, htonl(0x0A070000 | (conv >> 16)), port, (conv & 0xffff));
+		up = tcpup_newcb(daddr, htonl(0x0A070000 | ((conv >> 16) & 0xffff)), port, (conv & 0xffff));
 		if (up) up->t_conv = conv;
 	} else {
 		fprintf(stderr, "failure: %d %x %x\n", 999, to.to_flags, to.to_dsaddr? to.to_dsaddr[0]: 0);

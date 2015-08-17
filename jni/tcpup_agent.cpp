@@ -158,6 +158,7 @@ int main(int argc, char *argv[])
 	fcntl(interface, F_SETFL, O_NONBLOCK);
 	maxfd = (tunnel < interface? interface: tunnel);
 
+	system("ifconfig tun1 10.7.0.15/16 mtu 1420 up");
 	while (true) {
 		u_char packet[1500];
 
@@ -187,12 +188,12 @@ int main(int argc, char *argv[])
 			int ln1, xdat;
 			unsigned *fakeack;
 			int num = read(interface, packet, sizeof(packet));
-			fprintf(stderr, "TUNNEL num %d\n", num);
+			//fprintf(stderr, "TUNNEL num %d\n", num);
 
 			ln1 = translate_ip2up(buf, sizeof(buf), packet, num, &xdat, &fakeack);
 
 			if (ln1 > 10) {
-				fprintf(stderr, "ln1 %d\n", ln1);
+				//fprintf(stderr, "vpn_ouput ln1 %d\n", ln1);
 				vpn_output(tunnel, buf, ln1, xdat);
 			}
 		}
@@ -203,8 +204,8 @@ int main(int argc, char *argv[])
 			socklen_t fromlen = sizeof(from);
 
 			num = recvfrom(tunnel, packet, sizeof(packet),
-					0, (struct sockaddr *)&from, &fromlen);
-			fprintf(stderr, "ICMP num %d\n", num);
+					MSG_DONTWAIT, (struct sockaddr *)&from, &fromlen);
+			//fprintf(stderr, "ICMP num %d\n", num);
 
 			u_short key = 0;
 			u_char buf[1500];
