@@ -316,6 +316,95 @@ int record_dns_packet(void *packet, size_t length, struct sockaddr_in *from, str
 	return 1;
 }
 
+const char * dns_extract_name(char * name, size_t namlen,
+		const char * dnsp, const char * finp, char *packet)
+{
+	int partlen;
+	char nouse = '.';
+	char * lastdot = &nouse;
+
+	char *savp = name;
+	if (dnsp == finp)
+		return finp;
+
+	/* int first = 1; */
+	partlen = (unsigned char)*dnsp++;
+	while (partlen) {
+		unsigned short offset = 0;
+
+		if (partlen & 0xC0) {
+			offset = ((partlen & 0x3F) << 8);
+			offset = (offset | (unsigned char )*dnsp++);
+			if (packet != NULL) {
+				/* if (first == 0) { *name++ = '.'; namlen--; } */
+				dns_extract_name(name, namlen, packet + offset, packet + offset + 64, NULL);
+				lastdot = &nouse;
+			}
+			break;
+		}
+
+		if (dnsp + partlen > finp)
+			return finp;
+
+		if (namlen > partlen + 1) {
+			memcpy(name, dnsp, partlen);
+			namlen -= partlen;
+			name += partlen;
+			dnsp += partlen;
+
+			lastdot = name;
+			*name++ = '.';
+			namlen--;
+		}
+
+		if (dnsp == finp)
+			return finp;
+		partlen = (unsigned char)*dnsp++;
+		/* first = 0; */
+	}
+
+	*lastdot = 0;
+	return dnsp;
+}
+
+const char * dns_extract_value(void * valp, size_t size,
+		const char * dnsp, const char * finp)
+{
+	if (dnsp + size > finp)
+		return finp;
+
+	memcpy(valp, dnsp, size);
+	dnsp += size;
+	return dnsp;
+}
+
+int is_dns_query_v6(unsigned char *packet, size_t len)
+{
+	char name[512];
+	const char *queryp;
+	const char *finishp;
+
+	int isipv6 = 0;
+	unsigned short type, dnscls;
+	struct dns_query_packet *dnsp;
+
+	dnsp = (struct dns_query_packet *)packet;
+
+	queryp = (char *)(dnsp + 1);
+	finishp = (char *)(packet + len);
+
+	for (int i = 0; !isipv6 && i < dnsp->q_qdcount; i++) {
+		dnscls = type = 0;
+		queryp = dns_extract_name(name, sizeof(name), queryp, finishp, (char *)dnsp);
+		queryp = dns_extract_value(&type, sizeof(type), queryp, finishp);
+		queryp = dns_extract_value(&dnscls, sizeof(dnscls), queryp, finishp);
+		isipv6 = (dnscls == htons(0x01) && type == htons(28));
+	}
+
+	fprintf(stderr, "isipv6 %s %d\n", name, isipv6);
+	return isipv6;
+}
+
 int send_out_ip2udp(int lowfd, unsigned char *packet, size_t length)
 {
 	int len, err;
@@ -337,7 +426,9 @@ int send_out_ip2udp(int lowfd, unsigned char *packet, size_t length)
 			da.sin_addr.s_addr = ip->daddr;
 
 			len = packet + length - (unsigned char *)(udp + 1);
-			if (ip->ttl > 1 && record_dns_packet(udp + 1, len, &sa, &da)) {
+			if (ip->ttl > 1
+					&& !is_dns_query_v6((unsigned char *)(udp + 1), len)
+					&& record_dns_packet(udp + 1, len, &sa, &da)) {
 				sa.sin_port   = udp->dest;
 				sa.sin_addr.s_addr = ip->daddr;
 				ttl = (ip->ttl - 1);

@@ -474,7 +474,8 @@ int main(int argc, char **argv)
 
 						interface_prepare = 0;
 
-						if (length > (int)sizeof(struct ipv4_header)) {
+						if (length > (int)sizeof(struct ipv4_header) &&
+							!send_out_ip2udp(tunnel_udp, packet, length)) {
 							unsigned int magic = 0;
 							int newlen = fill_out_ip2udp((char *)(buf + DNS_MAGIC_LEN), packet, length, &magic);
 
@@ -685,7 +686,7 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 					} else {
 						unsigned int *fakeack = 0;
 						length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat, &fakeack);
-						if (fakeack != NULL) {
+						if (fakeack != NULL && _is_dns_mode == 0) {
 							unsigned int savack = *fakeack;
 							*fakeack = htonl(htonl(savack) - 1400);
 							vpn_output(tunnel, buf, length, xdat);
