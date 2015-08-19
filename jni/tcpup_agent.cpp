@@ -189,8 +189,9 @@ int main(int argc, char *argv[])
 			unsigned *fakeack;
 			int num = read(interface, packet, sizeof(packet));
 			//fprintf(stderr, "TUNNEL num %d\n", num);
+			if (num > 0) {
 
-			ln1 = translate_ip2up(buf, sizeof(buf), packet, num, &xdat, &fakeack);
+				ln1 = translate_ip2up(buf, sizeof(buf), packet, num, &xdat, &fakeack);
 
 			if (ln1 > 10) {
 				//fprintf(stderr, "vpn_ouput ln1 %d\n", ln1);
@@ -205,21 +206,23 @@ int main(int argc, char *argv[])
 
 			num = recvfrom(tunnel, packet, sizeof(packet),
 					MSG_DONTWAIT, (struct sockaddr *)&from, &fromlen);
-			//fprintf(stderr, "ICMP num %d\n", num);
+			fprintf(stderr, "ICMP num %d\n", num);
+			if (num > 0) {
 
-			u_short key = 0;
-			u_char buf[1500];
-			static u_char plain[1500];
-			int len = num - LEN_PADDING;
-			u_char *adj = (u_char *)packet + LEN_PADDING;
+				u_short key = 0;
+				u_char buf[1500];
+				static u_char plain[1500];
+				int len = num - LEN_PADDING;
+				u_char *adj = (u_char *)packet + LEN_PADDING;
 
-			memcpy(&key, packet + 14, 2);
-			packet_decrypt(key, plain, adj, len);
+				memcpy(&key, packet + 14, 2);
+				packet_decrypt(key, plain, adj, len);
 
-			int ln1 = translate_up2ip(buf, sizeof(buf), plain, len);
-			if (ln1 > 20) {
-				write(interface, buf, ln1);
-				memcpy(&_sa_router, &from, fromlen);
+				int ln1 = translate_up2ip(buf, sizeof(buf), plain, len);
+				if (ln1 > 20) {
+					write(interface, buf, ln1);
+					memcpy(&_sa_router, &from, fromlen);
+				}
 			}
 		}
 

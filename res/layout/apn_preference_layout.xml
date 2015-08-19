@@ -50,7 +50,7 @@
 
     <RadioButton
         xmlns:android="http://schemas.android.com/apk/res/android"
-        android:id="@+android:id/apn_radiobutton"
+        android:id="@+id/apn_radiobutton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_vertical"
