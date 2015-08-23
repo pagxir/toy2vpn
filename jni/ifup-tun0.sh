@@ -2,6 +2,8 @@
 
 PATH=${PATH}:/sbin:/usr/sbin
 
+ip6tables -F FORWARD
+
 iptables -t mangle -N TOYVPN
 iptables -t mangle -F TOYVPN
 iptables -t mangle -A TOYVPN -d 0.0.0.0/8 -j RETURN
@@ -41,10 +43,12 @@ fi;
 
 sysctl -w net.ipv4.conf.all.rp_filter=0;
 sysctl -w net.ipv4.conf.${tun_dev}.rp_filter=0;
+sysctl -w net.ipv6.conf.all.forwarding=1
+sysctl -w net.ipv6.conf.default.forwarding=1
 
 ip -4 addr add 10.3.0.1/24 dev ${tun_dev}
-ip -6 addr add 2001:c0a8:2b01::1/40 dev ${tun_dev}
-ip -6 route add default dev ${tun_dev}
+ip -6 addr add 2001:c0a8:2b01::1/64 dev ${tun_dev}
+ip -6 route add default dev ${tun_dev} metric 256 proto static
 ip link set dev ${tun_dev} mtu 1400 up
 
 ip route flush table 30
