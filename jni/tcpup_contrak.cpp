@@ -443,7 +443,7 @@ static int set_relay_info(u_char *target, int type, void *host, u_short port)
 	return p - (char *)target;
 }
 
-static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, struct tcpiphdr *tcp, int length, tcp_seq **fakeack)
+static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, struct tcpiphdr *tcp, int length, unsigned char **fakeack)
 {
 	int cnt;
 	int offip, offup;
@@ -502,10 +502,13 @@ static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, stru
 
 	if (SEQ_GT(th_ack, info->snd_una)
 			&& cnt == 0 && to.to_nsacks == 0
-			&& ((int)(th_ack - info->snd_una) > 1500)) {
-		*fakeack = &field->th_ack;
-	} else {
-		*fakeack = 0;
+			&& ((int)(th_ack - info->snd_una) > 1460)) {
+		struct tcpuphdr *p;
+		static unsigned char fake[1500];
+		memcpy(fake, field, sizeof(*field));
+		p = (struct tcpuphdr *)fake;
+		p->th_flags = 0;
+		*fakeack = fake;
 	}
 
 	tcpup_state_send(info, tcp, cnt);
@@ -557,7 +560,7 @@ static int translate_tcpup(struct tcpup_info *upp, struct tcpiphdr *tcp, struct 
 	return cnt + sizeof(*tcp) + offip;
 }
 
-int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size_t length, int *pxdat, tcp_seq **fakeack)
+int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size_t length, int *pxdat, unsigned char **fakeack)
 {
 	int offset;
 	int is_ipv6 = 1;

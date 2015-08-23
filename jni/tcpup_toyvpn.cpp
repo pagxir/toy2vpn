@@ -483,13 +483,10 @@ int main(int argc, char **argv)
 								memcpy(buf, &magic, DNS_MAGIC_LEN);
 								length = newlen + DNS_MAGIC_LEN;
 							} else {
-								unsigned int *fakeack = 0;
+								unsigned char *fakeack = 0;
 								length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat, &fakeack);
 								if (fakeack != NULL && _is_dns_mode == 0) {
-									unsigned int savack = *fakeack;
-									*fakeack = htonl(htonl(savack) - 1400);
-									vpn_output(tunnel, buf, length, xdat);
-									*fakeack = savack;
+									vpn_output(tunnel, fakeack, length, xdat);
 								}
 							}
 
@@ -684,13 +681,10 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 						memcpy(buf, &magic, DNS_MAGIC_LEN);
 						length = newlen + DNS_MAGIC_LEN;
 					} else {
-						unsigned int *fakeack = 0;
+						unsigned char *fakeack = 0;
 						length = translate_ip2up(buf, sizeof(buf), packet, length, &xdat, &fakeack);
 						if (fakeack != NULL && _is_dns_mode == 0) {
-							unsigned int savack = *fakeack;
-							*fakeack = htonl(htonl(savack) - 1400);
-							vpn_output(tunnel, buf, length, xdat);
-							*fakeack = savack;
+							vpn_output(tunnel, fakeack, length, xdat);
 						}
 					}
 

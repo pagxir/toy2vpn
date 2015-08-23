@@ -186,7 +186,7 @@ int main(int argc, char *argv[])
 		if (FD_ISSET(interface, &readfds)) {
 			u_char buf[1500];
 			int ln1, xdat;
-			unsigned *fakeack;
+			unsigned char *fakeack;
 			int num = read(interface, packet, sizeof(packet));
 			//fprintf(stderr, "TUNNEL num %d\n", num);
 			if (num > 0) {
@@ -196,6 +196,7 @@ int main(int argc, char *argv[])
 			if (ln1 > 10) {
 				//fprintf(stderr, "vpn_ouput ln1 %d\n", ln1);
 				vpn_output(tunnel, buf, ln1, xdat);
+			}
 			}
 		}
 
