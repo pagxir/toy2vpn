@@ -475,7 +475,7 @@ int main(int argc, char **argv)
 						interface_prepare = 0;
 
 						if (length > (int)sizeof(struct ipv4_header) &&
-							!send_out_ip2udp(tunnel_udp, packet, length)) {
+							!send_out_ip2udp(tunnel_udp, packet, length, interface)) {
 							unsigned int magic = 0;
 							int newlen = fill_out_ip2udp((char *)(buf + DNS_MAGIC_LEN), packet, length, &magic);
 

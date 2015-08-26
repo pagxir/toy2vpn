@@ -24,7 +24,9 @@ iptables -t mangle -A TOYVPN -p tcp --dport 30008 -j RETURN
 iptables -t mangle -A TOYVPN -p tcp -j MARK --set-mark 0x30
 
 iptables -F OUTPUT -t mangle
-iptables -A OUTPUT -t mangle -p tcp -j TOYVPN
+#iptables -A OUTPUT -t mangle -p tcp -j TOYVPN
+iptables -A PREROUTING -t mangle -p tcp -j TOYVPN
+iptables -A PREROUTING -t mangle -p udp --dport 53 -j TOYVPN
 iptables -A OUTPUT -t mangle -p udp --dport 53 -j TOYVPN
 
 tun_dev="tun0";

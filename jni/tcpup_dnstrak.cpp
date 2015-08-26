@@ -12,6 +12,7 @@
 #include <time.h>
 #include <errno.h>
 #include <assert.h>
+#include <unistd.h>
 
 #include "tcpup/up.h"
 #include "tcpup/ip.h"
@@ -378,7 +379,42 @@ const char * dns_extract_value(void * valp, size_t size,
 	return dnsp;
 }
 
-int is_dns_query_v6(unsigned char *packet, size_t len)
+int is_fake_name(const char *name)
+{
+	int nl = strlen(name);
+#define fakedn(xx) do { int ln = strlen(xx); if (nl >= ln && strncmp(name + nl - ln, xx, ln) == 0) return 1; } while ( 0 )
+	fakedn("google.com");
+	fakedn("googleapis.com");
+	fakedn("gmail.com");
+	fakedn("doubleclick.net");
+	fakedn("ytimg.com");
+	fakedn("googlesyndication.com");
+	fakedn("googleusercontent.com");
+	fakedn("youtube.com");
+	fakedn("youtube-nocookie.com");
+	fakedn("gstatic.com");
+	fakedn("googlevideo.com");
+	fakedn("googleadservices.com");
+	fakedn("googleusercontent.com");
+	fakedn("facebook.com");
+	fakedn("twitter.com");
+	fakedn("chinagfw.org");
+	fakedn("pixnet.net");
+	fakedn("wordpress.com");
+	fakedn("appspot.com");
+	fakedn("blogspot.com");
+	fakedn("vpngate.net");
+	fakedn("googlecode.com");
+	fakedn("gaeproxy.com");
+	fakedn("youtu.be");
+	fakedn("ggpht.com");
+	fakedn("fanqianghou.com");
+#undef fakedn
+
+	return 0;
+}
+
+int dns_query_type(unsigned char *packet, size_t len)
 {
 	char name[512];
 	const char *queryp;
@@ -399,13 +435,52 @@ int is_dns_query_v6(unsigned char *packet, size_t len)
 		queryp = dns_extract_value(&type, sizeof(type), queryp, finishp);
 		queryp = dns_extract_value(&dnscls, sizeof(dnscls), queryp, finishp);
 		isipv6 = (dnscls == htons(0x01) && type == htons(28));
+		if (!isipv6 && is_fake_name(name)) return 0;
 	}
 
 	fprintf(stderr, "isipv6 %s %d\n", name, isipv6);
-	return isipv6;
+	return isipv6? 0x06: 0x04;
 }
 
-int send_out_ip2udp(int lowfd, unsigned char *packet, size_t length)
+void *dns_fake_resp(int tunfd, unsigned char *packet, size_t length)
+{
+	struct iphdr *ip;
+	struct udphdr *udp;
+	struct dns_query_packet *dnsp;
+
+	unsigned flags;
+	unsigned v4addr = 0;
+	unsigned short v4port = 0;
+
+	ip = (struct iphdr *)packet;
+	udp = (struct udphdr *)(ip + 1);
+
+	v4addr = ip->daddr;
+	ip->daddr = ip->saddr;
+	ip->saddr = v4addr;
+
+	v4port = udp->dest;
+	udp->dest = udp->source;
+	udp->source = v4port;
+
+	dnsp = (struct dns_query_packet *)(udp + 1);
+	flags = ntohs(dnsp->q_flags);
+
+	if (flags & 0x8000) {
+		return 0;
+	}
+
+	ip->ttl = (ip->ttl - 1);
+	dnsp->q_flags = htons(flags| 0x8000);
+
+	udp_checksum(&udp->check, (in_addr *)&ip->daddr,
+			(in_addr *)&ip->saddr, udp, packet + length - (unsigned char *)udp);
+	ip_checksum(&ip->check, ip, sizeof(*ip));
+	write(tunfd, packet, length);
+	return packet;
+}
+
+int send_out_ip2udp(int lowfd, unsigned char *packet, size_t length, int tunfd)
 {
 	int len, err;
 	socklen_t ttl;
@@ -426,16 +501,28 @@ int send_out_ip2udp(int lowfd, unsigned char *packet, size_t length)
 			da.sin_addr.s_addr = ip->daddr;
 
 			len = packet + length - (unsigned char *)(udp + 1);
-			if (ip->ttl > 1
-					&& !is_dns_query_v6((unsigned char *)(udp + 1), len)
-					&& record_dns_packet(udp + 1, len, &sa, &da)) {
-				sa.sin_port   = udp->dest;
-				sa.sin_addr.s_addr = ip->daddr;
-				ttl = (ip->ttl - 1);
-				err = setsockopt(lowfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+			if (ip->ttl > 1) {
+				int type = dns_query_type((unsigned char *)(udp + 1), len);
 
-				err = sendto(lowfd, udp + 1, len, 0, (struct sockaddr *)&sa, sizeof(sa));
-				return 1;
+				switch (type) {
+					case 0x06:
+						return 0;
+
+					default:
+						dns_fake_resp(tunfd, packet, length);
+						return 1;
+
+					case 0x04:
+						if (record_dns_packet(udp + 1, len, &sa, &da)) {
+							sa.sin_port   = udp->dest;
+							sa.sin_addr.s_addr = ip->daddr;
+							ttl = (ip->ttl - 1);
+							err = setsockopt(lowfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+
+							err = sendto(lowfd, udp + 1, len, 0, (struct sockaddr *)&sa, sizeof(sa));
+							return 1;
+						}
+				}
 			}
 		}
 	}
