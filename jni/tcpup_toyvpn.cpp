@@ -231,7 +231,7 @@ static int vpn_output(int tunnel, const void *data, size_t len, int xdat)
 	unsigned char _crypt_stream[RCVPKT_MAXSIZ];
 
 	memcpy(TUNNEL_PADDIND + 14, &key, 2);
-	packet_encrypt(key, _crypt_stream, data, len);
+	packet_encrypt(htons(key), _crypt_stream, data, len);
 	iovecs[1].iov_base = _crypt_stream;
 	iovecs[1].iov_len  = len;
 
@@ -418,7 +418,7 @@ int main(int argc, char **argv)
 								memcpy(&key, packet + 14, 2);
 
 								static u_char plain[1500];
-								packet_decrypt(key, plain, adj, len);
+								packet_decrypt(htons(key), plain, adj, len);
 
 								int len1 = 0, magic = 0;
 								memcpy(&magic, plain, DNS_MAGIC_LEN);
@@ -436,6 +436,11 @@ int main(int argc, char **argv)
 								if (len1 > 0) {
 									//fprintf(stderr, "write to tun length: %d\n", length);
 									write(interface, buf, len1);
+										{
+										FILE *fp = fopen("/tmp/ab.pcap", "wb");
+										fwrite(buf, 1, len1, fp);
+										fclose(fp);
+											}
 								} else if (len1 == -1) {
 									//fprintf(stderr, "write to tun length: %d\n", length);
 									len1 = tcpup_reset_fill(buf, plain, len);
@@ -619,7 +624,7 @@ int pingle_do_loop(int tunnel, int tunnel_udp, int interface)
 						memcpy(&key, packet + 14, 2);
 
 						static u_char plain[1500];
-						packet_decrypt(key, plain, adj, len);
+						packet_decrypt(htons(key), plain, adj, len);
 
 
 						int len1 = 0, magic = 0;

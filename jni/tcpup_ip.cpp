@@ -251,9 +251,7 @@ int tcp_checksum(void *store, int is_ipv6, const void *src, const void *dst, voi
 {
     unsigned cksum = 0;
     unsigned short cksum1 = 0;
-
-    cksum = htons(6);
-    cksum += htons(len);
+    cksum = htons(6 + len);
     //fprintf(stderr, "tcp_checksum length: %ld %x\n", len, *(unsigned short *)store);
     if (store != NULL) memset(store, 0, 2);
 	cksum = tcpip_checksum(cksum, src, is_ipv6? 16: 4, 0);
@@ -266,8 +264,8 @@ int tcp_checksum(void *store, int is_ipv6, const void *src, const void *dst, voi
         cksum1 = (cksum >> 16);
     }
 
-    cksum = (~cksum);
-    if (store != NULL) memcpy(store, &cksum, 2);
+    cksum1 = (~cksum);
+    if (store != NULL) memcpy(store, &cksum1, 2);
     //fprintf(stderr, "tcp_checksum update: %ld %x\n", len, *(unsigned short *)store);
 
     return cksum;
@@ -282,8 +280,7 @@ int udp_checksum(void *store, struct in_addr *src, struct in_addr *dst, void *bu
     unsigned long to = dst->s_addr;
     unsigned long from = src->s_addr;
 
-    cksum = htons(17);
-    cksum += htons(len);
+    cksum = htons(17 + len);
     cksum += (to & 0xffff);
     cksum += (to >> 0x10);
 
@@ -309,11 +306,11 @@ int udp_checksum(void *store, struct in_addr *src, struct in_addr *dst, void *bu
         cksum1 = (cksum >> 16);
     }
 
-    cksum = (~cksum);
-    if (store != NULL) memcpy(store, &cksum, 2);
+    cksum1 = (~cksum);
+    if (store != NULL) memcpy(store, &cksum1, 2);
     //fprintf(stderr, "tcp_checksum update: %ld %x\n", len, *(unsigned short *)store);
 
-    return cksum;
+    return cksum1;
 }
 
 int ip_checksum(void *store, void *buf, size_t len)
@@ -341,9 +338,9 @@ int ip_checksum(void *store, void *buf, size_t len)
         cksum1 = (cksum >> 16);
     }
 
-    cksum = (~cksum);
-    if (store != NULL) memcpy(store, &cksum, 2);
+    cksum1 = (~cksum);
+    if (store != NULL) memcpy(store, &cksum1, 2);
     //fprintf(stderr, "ip_checksum update: %ld %x\n", len, *(unsigned short *)store);
 
-    return cksum;
+    return cksum1;
 }
