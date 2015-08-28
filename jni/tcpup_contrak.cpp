@@ -502,11 +502,12 @@ static int translate_tcpip(struct tcpup_info *info, struct tcpuphdr *field, stru
 
 	if (SEQ_GT(th_ack, info->snd_una)
 			&& cnt == 0 && to.to_nsacks == 0
+			&& (tcp->th_flags == TH_ACK) && offup == 0
 			&& ((int)(th_ack - info->snd_una) > 1460)) {
-		struct tcpuphdr *p;
 		static unsigned char fake[1500];
+		struct tcpuphdr *p = (struct tcpuphdr *)fake;
 		memcpy(fake, field, sizeof(*field));
-		p = (struct tcpuphdr *)fake;
+		p->th_conv  = info->t_conv;
 		p->th_flags = 0;
 		*fakeack = fake;
 	}
