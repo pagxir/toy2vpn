@@ -429,7 +429,7 @@ int dns_query_type(unsigned char *packet, size_t len)
 	queryp = (char *)(dnsp + 1);
 	finishp = (char *)(packet + len);
 
-	for (int i = 0; !isipv6 && i < dnsp->q_qdcount; i++) {
+	for (int i = 0; !isipv6 && i < htons(dnsp->q_qdcount); i++) {
 		dnscls = type = 0;
 		queryp = dns_extract_name(name, sizeof(name), queryp, finishp, (char *)dnsp);
 		queryp = dns_extract_value(&type, sizeof(type), queryp, finishp);

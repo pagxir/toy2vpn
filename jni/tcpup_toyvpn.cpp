@@ -436,11 +436,6 @@ int main(int argc, char **argv)
 								if (len1 > 0) {
 									//fprintf(stderr, "write to tun length: %d\n", length);
 									write(interface, buf, len1);
-										{
-										FILE *fp = fopen("/tmp/ab.pcap", "wb");
-										fwrite(buf, 1, len1, fp);
-										fclose(fp);
-											}
 								} else if (len1 == -1) {
 									//fprintf(stderr, "write to tun length: %d\n", length);
 									len1 = tcpup_reset_fill(buf, plain, len);
