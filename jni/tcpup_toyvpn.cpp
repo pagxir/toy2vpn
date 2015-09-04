@@ -734,7 +734,7 @@ int pingle_open(void)
 
 	int tunnel = socket(AF_INET, SOCK_DGRAM, (!_is_dns_mode) * IPPROTO_ICMP);
 
-#if 0
+#if 1
 	if (tunnel != -1) {
 		setsockopt(tunnel, SOL_SOCKET, SO_SNDBUF, (char *)&bufsiz, sizeof(bufsiz));
 		setsockopt(tunnel, SOL_SOCKET, SO_RCVBUF, (char *)&bufsiz, sizeof(bufsiz));
