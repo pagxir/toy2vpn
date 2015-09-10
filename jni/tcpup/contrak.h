@@ -10,6 +10,7 @@ int translate_up2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 int translate_ip2up(unsigned char *buf, size_t size, unsigned char *packet, size_t length, int *pxdat, unsigned char **fakeack);
 
 int tcpup_do_keepalive(tcpup_out_f *output, int tunnel, int xdat);
+int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size_t length);
 
 #endif
 

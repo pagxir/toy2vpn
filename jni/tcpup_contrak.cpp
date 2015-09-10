@@ -58,6 +58,7 @@ static int _tot_tcp = 0;
 static int _tot_pid = 0;
 static int _tot_inc = 0;
 static struct tcpup_info *_tcpup_info_header = NULL;
+static unsigned char ip6_prefix[16] = {0x20, 0x01, 0xc0, 0xa8, 0x2b, 0x01};
 
 static char const * const tcpstates[] = { 
 	"CLOSED",       "LISTEN",       "SYN_SENT",     "SYN_RCVD",
@@ -420,6 +421,30 @@ static tcpup_info *tcpup_newcb6(const struct in6_addr &src, const struct in6_add
 	return up;
 }
 
+static tcpup_info *tcpup_wrapcb(struct tcpup_info *local)
+{
+	static struct tcpup_info info0;
+
+	if (local != NULL && local->ip_ver == 0x04) {
+		unsigned int subnet = htonl(inet_addr("10.3.0.0"));
+		unsigned int hostip = (subnet | 0x01);
+
+		unsigned short sport = (local->t_conv & 0xffff);
+		unsigned int sclient = subnet | ((local->t_conv >> 16)  & 0xffff);
+
+		info0 = *local;
+
+		info0.t_peer.in.s_addr = htonl(sclient); 
+		info0.d_port = sport;
+
+		info0.t_from.in.s_addr = htonl(hostip); 
+		info0.s_port = htons(8000);
+
+		return &info0;
+	}
+
+	return NULL;
+}
 
 static u_char _null_[28] = {0};
 static u_char type_len_map[8] = {0x0, 0x04, 0x0, 0x0, 0x10};
@@ -926,3 +951,126 @@ int tcpup_do_keepalive(tcpup_out_f *output, int tunnel, int xdat)
 
 	return (c1 << 16) | c2;
 }
+
+int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size_t length)
+{
+	int offset;
+	int is_ipv6 = 1;
+
+	struct iphdr *ip;
+	struct ip6_hdr *ip6;
+	struct tcpiphdr *tcp;
+	struct tcpup_info *upp = NULL;
+
+	ip = (struct iphdr *)packet;
+
+	switch (ip->version) {
+		case 0x06:
+			ip6 = (struct ip6_hdr *)packet;
+			tcp = (struct tcpiphdr *)(ip6 + 1);
+			if (ip6->ip6_ctlun.ip6_un1.ip6_un1_nxt != IPPROTO_TCP) {
+				fprintf(stderr, "drop6, protocol not support: %d\n", ip6->ip6_ctlun.ip6_un1.ip6_un1_nxt);
+				return 0;
+			}
+
+			if (memcpy(&ip6->ip6_dst, ip6_prefix, 14) == 0) {
+				unsigned short hipart;
+				memcpy(&hipart, &ip6->ip6_dst + 14, 2);
+				upp = tcpup_lookup((hipart << 16) | tcp->th_dport);
+				if (upp == NULL) return -1;
+			} else {
+				upp = tcpup_findcb6(ip6->ip6_src, ip6->ip6_dst, tcp->th_sport, tcp->th_dport);
+				upp = tcpup_wrapcb(upp);
+			}
+			break;
+
+		case 0x04:
+			is_ipv6 = 0;
+			tcp = (struct tcpiphdr *)(ip + 1);
+			if (ip->protocol != IPPROTO_TCP) {
+				fprintf(stderr, "drop, protocol not support: %d\n", ip->protocol);
+				return 0;
+			}
+
+			if ((htonl(ip->daddr) & 0xffff0000) == htonl(inet_addr("10.3.0.0"))) {
+				unsigned int hipart = 0xffff & ntohl(ip->daddr);
+				unsigned int convt = (hipart << 16) | tcp->th_dport;
+				upp = tcpup_lookup((hipart << 16) | tcp->th_dport);
+				if (upp == NULL) return -1;
+			} else {
+				upp = tcpup_findcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport);
+				upp = tcpup_wrapcb(upp);
+			}
+			break;
+
+		default:
+			fprintf(stderr, "drop, family not support: %d\n", ip->version);
+			is_ipv6 = 0;
+			return 0;
+	}
+
+
+	if (upp == NULL) {
+		if (tcp->th_flags & TH_RST) {
+			/* silent drop, ignore packet */
+			fprintf(stderr, "silent drop, ignore packet\n");
+			return 0;
+		}
+
+		if (tcp->th_flags & TH_ACK) {
+			/* send back rst */
+			fprintf(stderr, "send back rst, but ignore\n");
+			return -1;
+		}
+
+		if (tcp->th_flags & TH_SYN) {
+			upp = (is_ipv6 == 0)?
+				tcpup_newcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport):
+				tcpup_newcb6(ip6->ip6_src, ip6->ip6_dst, tcp->th_sport, tcp->th_dport);
+			fprintf(stderr, "tcp convert %x\n", upp->t_conv);
+			assert(upp != NULL);
+			upp = tcpup_wrapcb(upp);
+		} else {
+			/* silent drop, ignore packet */
+			fprintf(stderr, "silent drop, ignore packet\n");
+			return 0;
+		}
+	}
+
+	memcpy(buf, packet, length);
+	if (is_ipv6) {
+		struct ip6_hdr *ipo6;
+		struct tcpiphdr *tcpo;
+
+		ipo6 = (struct ip6_hdr *)buf;
+		tcpo = (struct tcpiphdr *)(ipo6 + 1);
+
+		ipo6->ip6_src = upp->t_peer.in6;
+		ipo6->ip6_dst = upp->t_from.in6;
+
+		tcpo->th_dport = upp->s_port;
+		tcpo->th_sport = upp->d_port;
+		tcp_checksum(&tcpo->th_sum, is_ipv6, &ipo6->ip6_src, &ipo6->ip6_dst, tcpo, (char *)buf + length - (char *)tcpo);
+
+	} else {
+		struct iphdr *ipo;
+		struct tcpiphdr *tcpo;
+
+		ipo = (struct iphdr *)buf;
+		tcpo = (struct tcpiphdr *)(ipo + 1);
+
+		ipo->saddr = upp->t_peer.in.s_addr;
+		ipo->daddr = upp->t_from.in.s_addr;
+		ipo->check = 0;
+
+		tcpo->th_dport = upp->s_port;
+		tcpo->th_sport = upp->d_port;
+		tcpo->th_sum = 0;
+
+		tcp_checksum(&tcpo->th_sum, is_ipv6, &ipo->saddr, &ipo->daddr, tcpo, (char *)buf + length - (char *)tcpo);
+		ip_checksum(&ipo->check, ipo, sizeof(*ipo));
+	}
+
+	return length;
+}
+
