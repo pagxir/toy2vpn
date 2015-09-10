@@ -254,7 +254,7 @@ int resolved_dns_packet(void *buf, const void *packet, size_t length, struct soc
 		udp = (struct udphdr *)(ip + 1);
 
 		/* from dns server */;
-		ident = htons(dnsp->q_ident);
+		ident = (dnsp->q_ident);
 		index = (ident & 0x1FF);
 
 		struct cached_client *client = &__cached_client[index];
@@ -313,7 +313,7 @@ int record_dns_packet(void *packet, size_t length, struct sockaddr_in *from, str
 	client->flags = 1;
 	client->l_ident = htons(dnsp->q_ident);
 	client->r_ident = (rand() & 0xFE00) | index;
-	dnsp->q_ident = htons(client->r_ident);
+	dnsp->q_ident = (client->r_ident);
 	return 1;
 }
 

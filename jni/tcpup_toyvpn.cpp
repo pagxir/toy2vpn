@@ -387,6 +387,12 @@ int main(int argc, char **argv)
 				exit(-1);
 			}
 
+			if (count == 0) {
+				fprintf(stderr, "timeout\n");
+				int count = tcpup_do_keepalive(vpn_output, tunnel, 0);
+				continue;
+			}
+
 			if (count > 0) {
 				int length;
 				int tunnel_prepare;
