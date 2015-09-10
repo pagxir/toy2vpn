@@ -109,7 +109,7 @@ static int vpn_output(int tunnel, const void *data, size_t len, int xdat)
 	unsigned char _crypt_stream[RCVPKT_MAXSIZ];
 
 	memcpy(TUNNEL_PADDIND + 14, &key, 2);
-	packet_encrypt(key, _crypt_stream, data, len);
+	packet_encrypt(htons(key), _crypt_stream, data, len);
 	iovecs[1].iov_base = _crypt_stream;
 	iovecs[1].iov_len  = len;
 
@@ -193,10 +193,10 @@ int main(int argc, char *argv[])
 
 				ln1 = translate_ip2up(buf, sizeof(buf), packet, num, &xdat, &fakeack);
 
-			if (ln1 > 10) {
-				//fprintf(stderr, "vpn_ouput ln1 %d\n", ln1);
-				vpn_output(tunnel, buf, ln1, xdat);
-			}
+				if (ln1 > 10) {
+					//fprintf(stderr, "vpn_ouput ln1 %d\n", ln1);
+					vpn_output(tunnel, buf, ln1, xdat);
+				}
 			}
 		}
 
@@ -217,7 +217,7 @@ int main(int argc, char *argv[])
 				u_char *adj = (u_char *)packet + LEN_PADDING;
 
 				memcpy(&key, packet + 14, 2);
-				packet_decrypt(key, plain, adj, len);
+				packet_decrypt(htons(key), plain, adj, len);
 
 				int ln1 = translate_up2ip(buf, sizeof(buf), plain, len);
 				if (ln1 > 20) {
