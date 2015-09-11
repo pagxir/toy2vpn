@@ -241,8 +241,8 @@ unsigned tcpip_checksum(unsigned cksum,  const void *buf, size_t len, int finish
     }
 
     if (len > 0 && finish) {
-	unsigned short t0 = ntohs(*digit) & ~0xff;
-        cksum += htons(t0);
+		unsigned short t0 = ntohs(*digit) & ~0xff;
+		cksum += htons(t0);
     }
 
 	return cksum;

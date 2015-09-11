@@ -56,7 +56,13 @@ int main(int argc, char *argv[])
 	maxfd = interface;
 	fcntl(interface, F_SETFL, O_NONBLOCK);
 
-	system("ifconfig tun1 10.3.0.1/16 mtu 1420 up");
+	system("ifconfig tun1 10.3.0.1/16 mtu 1420");
+	system("ifconfig tun1 10.3.0.1/16 up");
+	system("ip -4 r a 115.239.210.27 dev tun1");
+    system("ip -6 addr add 2001:c0a8:2b01::1/64 dev tun1");
+    system("ip -6 route add default dev tun1 metric 256 proto static");
+
+
 	while (true) {
 		u_char packet[1500];
 

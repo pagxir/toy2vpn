@@ -443,6 +443,25 @@ static tcpup_info *tcpup_wrapcb(struct tcpup_info *local)
 		return &info0;
 	}
 
+	if (local != NULL && local->ip_ver == 0x06) {
+		unsigned int subnet = htonl(inet_addr("10.3.0.0"));
+		unsigned int hostip = (subnet | 0x01);
+
+		unsigned short sport = (local->t_conv & 0xffff);
+		unsigned int sclient = subnet | ((local->t_conv >> 16)  & 0xffff);
+
+		info0 = *local;
+
+		info0.t_peer.in.s_addr = htonl(sclient); 
+		info0.d_port = sport;
+
+		info0.t_from.in.s_addr = htonl(hostip); 
+		info0.s_port = htons(8000);
+
+		info0.ip_ver = 0x04;
+		return &info0;
+	}
+
 	return NULL;
 }
 
@@ -964,6 +983,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 
 	ip = (struct iphdr *)packet;
 
+	fprintf(stderr, "enter %x\n", translate_ip2ip);
 	switch (ip->version) {
 		case 0x06:
 			ip6 = (struct ip6_hdr *)packet;
@@ -973,12 +993,16 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 				return 0;
 			}
 
+#if 0
 			if (memcpy(&ip6->ip6_dst, ip6_prefix, 14) == 0) {
 				unsigned short hipart;
 				memcpy(&hipart, &ip6->ip6_dst + 14, 2);
 				upp = tcpup_lookup((hipart << 16) | tcp->th_dport);
 				if (upp == NULL) return -1;
 			} else {
+#else
+			{
+#endif
 				upp = tcpup_findcb6(ip6->ip6_src, ip6->ip6_dst, tcp->th_sport, tcp->th_dport);
 				upp = tcpup_wrapcb(upp);
 			}
@@ -994,7 +1018,6 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 
 			if ((htonl(ip->daddr) & 0xffff0000) == htonl(inet_addr("10.3.0.0"))) {
 				unsigned int hipart = 0xffff & ntohl(ip->daddr);
-				unsigned int convt = (hipart << 16) | tcp->th_dport;
 				upp = tcpup_lookup((hipart << 16) | tcp->th_dport);
 				if (upp == NULL) return -1;
 			} else {
@@ -1027,7 +1050,6 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 			upp = (is_ipv6 == 0)?
 				tcpup_newcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport):
 				tcpup_newcb6(ip6->ip6_src, ip6->ip6_dst, tcp->th_sport, tcp->th_dport);
-			fprintf(stderr, "tcp convert %x\n", upp->t_conv);
 			assert(upp != NULL);
 			upp = tcpup_wrapcb(upp);
 		} else {
@@ -1038,21 +1060,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 	}
 
 	memcpy(buf, packet, length);
-	if (is_ipv6) {
-		struct ip6_hdr *ipo6;
-		struct tcpiphdr *tcpo;
-
-		ipo6 = (struct ip6_hdr *)buf;
-		tcpo = (struct tcpiphdr *)(ipo6 + 1);
-
-		ipo6->ip6_src = upp->t_peer.in6;
-		ipo6->ip6_dst = upp->t_from.in6;
-
-		tcpo->th_dport = upp->s_port;
-		tcpo->th_sport = upp->d_port;
-		tcp_checksum(&tcpo->th_sum, is_ipv6, &ipo6->ip6_src, &ipo6->ip6_dst, tcpo, (char *)buf + length - (char *)tcpo);
-
-	} else {
+	if (!is_ipv6 && upp->ip_ver == 0x04) {
 		struct iphdr *ipo;
 		struct tcpiphdr *tcpo;
 
@@ -1069,6 +1077,62 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 
 		tcp_checksum(&tcpo->th_sum, is_ipv6, &ipo->saddr, &ipo->daddr, tcpo, (char *)buf + length - (char *)tcpo);
 		ip_checksum(&ipo->check, ipo, sizeof(*ipo));
+	} else if (upp->ip_ver == 0x06) {
+		struct ip6_hdr *ipo6;
+		struct tcpiphdr *tcpo;
+
+		ipo6 = (struct ip6_hdr *)buf;
+		tcpo = (struct tcpiphdr *)(ipo6 + 1);
+
+		ipo6->ip6_ctlun.ip6_un1.ip6_un1_flow = htonl(0x60000000);
+		ipo6->ip6_ctlun.ip6_un1.ip6_un1_plen = htons(sizeof(*tcpo));
+
+		ipo6->ip6_ctlun.ip6_un1.ip6_un1_nxt = IPPROTO_TCP;
+		ipo6->ip6_ctlun.ip6_un1.ip6_un1_hlim = 10;
+
+		int len = (char *)packet + length - (char *)tcp;
+		memcpy(tcpo, tcp, len);
+
+		ipo6->ip6_src = upp->t_peer.in6;
+		ipo6->ip6_dst = upp->t_from.in6;
+		tcpo->th_dport = upp->s_port;
+		tcpo->th_sport = upp->d_port;
+
+		ipo6->ip6_ctlun.ip6_un1.ip6_un1_plen = htons(len);
+		tcp_checksum(&tcpo->th_sum, 1, &ipo6->ip6_src, &ipo6->ip6_dst, tcpo, len);
+		return len + sizeof(*ipo6);
+	} else {
+		int len;
+		struct iphdr *ipo;
+		struct tcpiphdr *tcpo;
+
+		ipo = (struct iphdr *)buf;
+		tcpo = (struct tcpiphdr *)(ipo + 1);
+
+		ipo->ihl = 5;
+		ipo->version = 4;
+		ipo->tos = 0;
+		ipo->id  = (0xffff & (long)ipo);
+		ipo->tot_len = htons(sizeof(*tcp) + sizeof(*ip));
+		ipo->frag_off = htons(0x4000);
+		ipo->ttl = 28;
+		ipo->protocol = IPPROTO_TCP;
+
+		ipo->saddr = upp->t_peer.in.s_addr;
+		ipo->daddr = upp->t_from.in.s_addr;
+		ipo->check = 0;
+
+		len = (char *)packet + length - (char *)tcp;
+		memcpy(tcpo, tcp, len);
+		ipo->tot_len = htons(len + sizeof(*ip));
+
+		tcpo->th_dport = upp->s_port;
+		tcpo->th_sport = upp->d_port;
+		tcpo->th_sum = 0;
+
+		tcp_checksum(&tcpo->th_sum, 0, &ipo->saddr, &ipo->daddr, tcpo, len);
+		ip_checksum(&ipo->check, ipo, sizeof(*ipo));
+		return len + sizeof(*ipo);
 	}
 
 	return length;
