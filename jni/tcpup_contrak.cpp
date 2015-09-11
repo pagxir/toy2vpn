@@ -44,6 +44,9 @@ struct tcpup_info {
 	tcp_seq snd_nxt;
 	tcp_seq snd_max;
 
+	tcp_seq t_irs;
+	tcp_seq t_iss;
+
 	int t_mrked;
 	int t_xdat1;
 	tcp_seq ts_mark;
@@ -971,19 +974,59 @@ int tcpup_do_keepalive(tcpup_out_f *output, int tunnel, int xdat)
 	return (c1 << 16) | c2;
 }
 
+static int sockv5_connect(void *buf, struct tcpup_info *xpp)
+{
+	if (xpp->ip_ver == 0x06) {
+		char *cmdp = (char *)buf;
+		*cmdp++ = 0x05;
+		*cmdp++ = 0x01;
+		*cmdp++ = 0x00;
+
+		*cmdp++ = 0x05;
+		*cmdp++ = 0x01;
+		*cmdp++ = 0x00;
+		*cmdp++ = 0x04;
+		memcpy(cmdp, &xpp->t_peer.in6, 16);
+		cmdp += 16;
+		memcpy(cmdp, &xpp->d_port, 2);
+		cmdp += 2;
+		return cmdp - (char *)buf;
+	} else if (xpp->ip_ver == 0x04) {
+		char *cmdp = (char *)buf;
+		*cmdp++ = 0x05;
+		*cmdp++ = 0x01;
+		*cmdp++ = 0x00;
+
+		*cmdp++ = 0x05;
+		*cmdp++ = 0x01;
+		*cmdp++ = 0x00;
+		*cmdp++ = 0x01;
+		memcpy(cmdp, &xpp->t_peer.in, 4);
+		cmdp += 4;
+		memcpy(cmdp, &xpp->d_port, 2);
+		cmdp += 2;
+		return cmdp - (char *)buf;
+	}
+
+	return 0;
+}
+
 int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size_t length)
 {
 	int offset;
 	int is_ipv6 = 1;
+	int cut_data = 0;
+	unsigned int netcut = inet_addr("10.3.0.0");
+	unsigned int netclient = inet_addr("10.3.0.1");
 
 	struct iphdr *ip;
 	struct ip6_hdr *ip6;
 	struct tcpiphdr *tcp;
+	struct tcpup_info *xpp = NULL;
 	struct tcpup_info *upp = NULL;
 
 	ip = (struct iphdr *)packet;
 
-	fprintf(stderr, "enter %x\n", translate_ip2ip);
 	switch (ip->version) {
 		case 0x06:
 			ip6 = (struct ip6_hdr *)packet;
@@ -1003,8 +1046,8 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 #else
 			{
 #endif
-				upp = tcpup_findcb6(ip6->ip6_src, ip6->ip6_dst, tcp->th_sport, tcp->th_dport);
-				upp = tcpup_wrapcb(upp);
+				xpp = tcpup_findcb6(ip6->ip6_src, ip6->ip6_dst, tcp->th_sport, tcp->th_dport);
+				upp = tcpup_wrapcb(xpp);
 			}
 			break;
 
@@ -1016,13 +1059,14 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 				return 0;
 			}
 
-			if ((htonl(ip->daddr) & 0xffff0000) == htonl(inet_addr("10.3.0.0"))) {
+			if (netclient != ip->daddr && (htonl(ip->daddr) & 0xffff0000) == htonl(netcut)) {
 				unsigned int hipart = 0xffff & ntohl(ip->daddr);
 				upp = tcpup_lookup((hipart << 16) | tcp->th_dport);
 				if (upp == NULL) return -1;
+				xpp = upp;
 			} else {
-				upp = tcpup_findcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport);
-				upp = tcpup_wrapcb(upp);
+				xpp = tcpup_findcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport);
+				upp = tcpup_wrapcb(xpp);
 			}
 			break;
 
@@ -1047,11 +1091,11 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 		}
 
 		if (tcp->th_flags & TH_SYN) {
-			upp = (is_ipv6 == 0)?
+			xpp = (is_ipv6 == 0)?
 				tcpup_newcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport):
 				tcpup_newcb6(ip6->ip6_src, ip6->ip6_dst, tcp->th_sport, tcp->th_dport);
-			assert(upp != NULL);
-			upp = tcpup_wrapcb(upp);
+			assert(xpp != NULL);
+			upp = tcpup_wrapcb(xpp);
 		} else {
 			/* silent drop, ignore packet */
 			fprintf(stderr, "silent drop, ignore packet\n");
@@ -1059,25 +1103,126 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 		}
 	}
 
-	memcpy(buf, packet, length);
-	if (!is_ipv6 && upp->ip_ver == 0x04) {
-		struct iphdr *ipo;
-		struct tcpiphdr *tcpo;
+	if (xpp != NULL) {
+		int flgmask = TH_SYN| TH_ACK| TH_RST;
+		int payload = (char *)packet + length - (char *)tcp;
 
-		ipo = (struct iphdr *)buf;
-		tcpo = (struct tcpiphdr *)(ipo + 1);
+		if (xpp == upp) {
+			tcpup_state_receive(xpp, tcp, payload - (tcp->th_off << 2));
+			if ((tcp->th_flags & flgmask) == (TH_ACK| TH_SYN)) {
+				int len;
+				struct iphdr *ipo;
+				struct tcpiphdr *tcpo;
 
-		ipo->saddr = upp->t_peer.in.s_addr;
-		ipo->daddr = upp->t_from.in.s_addr;
-		ipo->check = 0;
+				ipo = (struct iphdr *)buf;
+				tcpo = (struct tcpiphdr *)(ipo + 1);
+				xpp->t_irs = htonl(tcp->th_seq);
 
-		tcpo->th_dport = upp->s_port;
-		tcpo->th_sport = upp->d_port;
-		tcpo->th_sum = 0;
+				ipo->ihl = 5;
+				ipo->version = 4;
+				ipo->tos = 0;
+				ipo->id  = (0xffff & (long)ipo);
+				ipo->tot_len = htons(sizeof(*tcp) + sizeof(*ip));
+				ipo->frag_off = htons(0x4000);
+				ipo->ttl = 28;
+				ipo->protocol = IPPROTO_TCP;
 
-		tcp_checksum(&tcpo->th_sum, is_ipv6, &ipo->saddr, &ipo->daddr, tcpo, (char *)buf + length - (char *)tcpo);
-		ip_checksum(&ipo->check, ipo, sizeof(*ipo));
-	} else if (upp->ip_ver == 0x06) {
+				upp = tcpup_wrapcb(xpp);
+				ipo->saddr = upp->t_peer.in.s_addr;
+				ipo->daddr = upp->t_from.in.s_addr;
+				ipo->check = 0;
+
+				len = sizeof(*tcp) + sockv5_connect(tcpo + 1, xpp);
+				tcpo->th_flags = TH_ACK;
+				tcpo->th_seq   = tcp->th_ack;
+				tcpo->th_ack   = htonl(htonl(tcp->th_seq) + 1);
+
+				tcpo->th_off    = sizeof(*tcp) >> 2;
+				tcpo->th_x2     = 0;
+				tcpo->th_urp    = 0;
+				tcpo->th_win    = htons(4096);
+
+				ipo->tot_len = htons(len + sizeof(*ip));
+
+				tcpo->th_dport = upp->s_port;
+				tcpo->th_sport = upp->d_port;
+				tcpo->th_sum = 0;
+
+				fprintf(stderr, "fake response\n");
+				tcp_checksum(&tcpo->th_sum, 0, &ipo->saddr, &ipo->daddr, tcpo, len);
+				ip_checksum(&ipo->check, ipo, sizeof(*ipo));
+				return len + sizeof(*ipo);
+			} else {
+				if ((tcp->th_flags & flgmask) == TH_ACK &&
+						xpp->t_iss + 1 == htonl(tcp->th_ack) &&
+						SEQ_GEQ(xpp->t_irs + 12, htonl(tcp->th_seq))) {
+					if (SEQ_GT(htonl(tcp->th_seq) + payload - (tcp->th_off << 2), xpp->t_irs + 12)) {
+						fprintf(stderr, "add ACK|SYN packet: %d\n", payload - (tcp->th_off << 2));
+						tcp_seq seq = (xpp->t_irs + 12);
+						tcp->th_seq = htonl(seq);
+						tcp->th_flags |= TH_SYN;
+						cut_data = 1;
+					} else {
+						int len;
+						struct iphdr *ipo;
+						struct tcpiphdr *tcpo;
+
+						ipo = (struct iphdr *)buf;
+						tcpo = (struct tcpiphdr *)(ipo + 1);
+
+						ipo->ihl = 5;
+						ipo->version = 4;
+						ipo->tos = 0;
+						ipo->id  = (0xffff & (long)ipo);
+						ipo->tot_len = htons(sizeof(*tcp) + sizeof(*ip));
+						ipo->frag_off = htons(0x4000);
+						ipo->ttl = 28;
+						ipo->protocol = IPPROTO_TCP;
+
+						upp = tcpup_wrapcb(xpp);
+						ipo->saddr = upp->t_peer.in.s_addr;
+						ipo->daddr = upp->t_from.in.s_addr;
+						ipo->check = 0;
+
+						len = sizeof(*tcp);
+						tcpo->th_flags = TH_ACK;
+						tcpo->th_seq   = tcp->th_ack;
+						tcpo->th_ack   = htonl(htonl(tcp->th_seq) + payload - (tcp->th_off << 2));
+
+						tcpo->th_off    = sizeof(*tcp) >> 2;
+						tcpo->th_x2     = 0;
+						tcpo->th_urp    = 0;
+						tcpo->th_win    = htons(4096);
+
+						ipo->tot_len = htons(len + sizeof(*ip));
+
+						tcpo->th_dport = upp->s_port;
+						tcpo->th_sport = upp->d_port;
+						tcpo->th_sum = 0;
+
+						fprintf(stderr, "fake ack\n");
+						tcp_checksum(&tcpo->th_sum, 0, &ipo->saddr, &ipo->daddr, tcpo, len);
+						ip_checksum(&ipo->check, ipo, sizeof(*ipo));
+						fprintf(stderr, "ignore packet\n");
+						return len + sizeof(*ipo);
+					}
+				}
+
+			}
+		} else {
+			tcpup_state_send(xpp, tcp, payload - (tcp->th_off << 2));
+			if (tcp->th_flags & TH_SYN) {
+				char buf[512];
+				fprintf(stderr, "fake request\n");
+				int ign_len = sockv5_connect(buf, xpp);
+				tcp_seq seq = htonl(tcp->th_seq);
+				tcp->th_seq = htonl(seq - ign_len);
+				xpp->t_iss = seq;
+			}
+		}
+	}
+
+	if (upp->ip_ver == 0x06) {
 		struct ip6_hdr *ipo6;
 		struct tcpiphdr *tcpo;
 
@@ -1091,6 +1236,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 		ipo6->ip6_ctlun.ip6_un1.ip6_un1_hlim = 10;
 
 		int len = (char *)packet + length - (char *)tcp;
+		if (cut_data) len = (tcp->th_off << 2);
 		memcpy(tcpo, tcp, len);
 
 		ipo6->ip6_src = upp->t_peer.in6;
@@ -1123,6 +1269,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 		ipo->check = 0;
 
 		len = (char *)packet + length - (char *)tcp;
+		if (cut_data) len = (tcp->th_off << 2);
 		memcpy(tcpo, tcp, len);
 		ipo->tot_len = htons(len + sizeof(*ip));
 
