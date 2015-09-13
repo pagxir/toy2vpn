@@ -1108,7 +1108,6 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 		int payload = (char *)packet + length - (char *)tcp;
 
 		if (xpp == upp) {
-			tcpup_state_receive(xpp, tcp, payload - (tcp->th_off << 2));
 			if ((tcp->th_flags & flgmask) == (TH_ACK| TH_SYN)) {
 				int len;
 				struct iphdr *ipo;
@@ -1207,10 +1206,9 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 						return len + sizeof(*ipo);
 					}
 				}
-
+				tcpup_state_receive(xpp, tcp, cut_data? 0: payload - (tcp->th_off << 2));
 			}
 		} else {
-			tcpup_state_send(xpp, tcp, payload - (tcp->th_off << 2));
 			if (tcp->th_flags & TH_SYN) {
 				char buf[512];
 				fprintf(stderr, "fake request\n");
@@ -1219,6 +1217,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *packet, size
 				tcp->th_seq = htonl(seq - ign_len);
 				xpp->t_iss = seq;
 			}
+			tcpup_state_send(xpp, tcp, payload - (tcp->th_off << 2));
 		}
 	}
 
