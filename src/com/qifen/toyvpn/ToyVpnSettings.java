@@ -251,10 +251,10 @@ public class ToyVpnSettings extends PreferenceActivity
 
 	public void doUpdateConfig() {
 		try {
-			String vpnSiteList = getHTTPContent("http://blog.keziwo.com/downloads/upn.conf");
+			String vpnSiteList = getHTTPContent("http://www.etherss.com/downloads/upn.conf");
 			setPreferenceConfig("vpn_site_list", vpnSiteList);
 
-			String vpnDeviceConfig = getHTTPContent("http://blog.keziwo.com/downloads/tun.conf");
+			String vpnDeviceConfig = getHTTPContent("http://www.etherss.com/downloads/tun.conf");
 			setPreferenceConfig("vpn_device_config", vpnDeviceConfig);
 		} catch (IOException e) {
 			// e.printStack();

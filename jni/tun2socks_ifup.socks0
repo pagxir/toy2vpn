@@ -1,0 +1,12 @@
+#!/bin/bash
+
+TUN=$1
+if [ -z "$TUN" ]; then
+	TUN="tun1";
+fi
+
+ip link set dev ${TUN} mtu 1480 up
+ip -4 addr add 10.3.0.1/16 dev ${TUN}
+
+ip -6 addr add 2001:c0a8:2b01::1/64 dev ${TUN}
+ip -6 route add 2000::/3 dev ${TUN} metric 256 proto static

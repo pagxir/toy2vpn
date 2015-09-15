@@ -29,7 +29,7 @@
 
 static int get_interface(const char *name)
 {
-	int interface = open("/dev/net/tun", O_RDWR | O_NONBLOCK);
+	int interface = open("/dev/net/tun", O_RDWR);
 
 	ifreq ifr;
 	memset(&ifr, 0, sizeof(ifr));
@@ -44,60 +44,138 @@ static int get_interface(const char *name)
 	return interface;
 }
 
+int parse_sockaddr_in(struct sockaddr_in *info, const char *address)
+{
+    const char *last;
+
+#define FLAG_HAVE_DOT    1
+#define FLAG_HAVE_ALPHA  2
+#define FLAG_HAVE_NUMBER 4
+#define FLAG_HAVE_SPLIT  8
+
+    int flags = 0;
+    char host[128] = {};
+
+    info->sin_family = AF_INET;
+    info->sin_port   = htons(0);
+    info->sin_addr.s_addr = htonl(0);
+
+    for (last = address; *last; last++) {
+        if (isdigit(*last)) flags |= FLAG_HAVE_NUMBER;
+        else if (*last == ':') flags |= FLAG_HAVE_SPLIT;
+        else if (*last == '.') flags |= FLAG_HAVE_DOT;
+        else if (isalpha(*last)) flags |= FLAG_HAVE_ALPHA;
+        else { fprintf(stderr, "get target address failure!\n"); return -1;}
+    }
+
+
+    if (flags == FLAG_HAVE_NUMBER) {
+        info->sin_port = htons(atoi(address));
+        return 0;
+    }
+
+    if (flags == (FLAG_HAVE_NUMBER| FLAG_HAVE_DOT)) {
+        info->sin_addr.s_addr = inet_addr(address);
+        return 0;
+    }
+
+    struct hostent *host0 = NULL;
+    if ((flags & ~FLAG_HAVE_NUMBER) == (FLAG_HAVE_ALPHA | FLAG_HAVE_DOT)) {
+        host0 = gethostbyname(address);
+        if (host0 != NULL)
+            memcpy(&info->sin_addr, host0->h_addr, 4);
+        return 0;
+    }
+
+    if (flags & FLAG_HAVE_SPLIT) {
+        const char *split = strchr(address, ':');
+        info->sin_port = htons(atoi(split + 1));
+
+        if (strlen(address) < sizeof(host)) {
+            strncpy(host, address, sizeof(host));
+            host[split - address] = 0;
+
+            if (flags & FLAG_HAVE_ALPHA) {
+                host0 = gethostbyname(host);
+                if (host0 != NULL)
+                    memcpy(&info->sin_addr, host0->h_addr, 4);
+                return 0;
+            }
+
+            info->sin_addr.s_addr = inet_addr(host);
+        }
+    }
+
+    return 0;
+}
+
+void run_config_script(const char *ifname, const char *script)
+{
+	char setup_cmd[8192];
+	sprintf(setup_cmd, "%s %s", script, ifname);
+	system(setup_cmd);
+	return;
+}
+
+static void usage(const char *prog_name)
+{
+    fprintf(stderr, "%s [options] <server>!\n", prog_name);
+    fprintf(stderr, "\t-h print this help!\n");
+    fprintf(stderr, "\t-t <tun-device> use this as tun device name, default socks0!\n");
+    fprintf(stderr, "\t-s <config-script> the path to config this interface when tun is up, default ./tun2socks_ifup.socks0!\n");
+    fprintf(stderr, "\tall @address should use this format <host:port> OR <port>\n");
+    fprintf(stderr, "\n");
+
+    return;
+}
+
 int main(int argc, char *argv[])
 {
 	int count = 0;
-	int maxfd = 0;
-	int interface = get_interface("tun1");
+	int interface = 0;
+	unsigned relay_ip = 0;
+	unsigned relay_mask = 0;
+	const char *tun = "socks0";
+	const char *script = "./tun2socks_ifup.socks0";
+    struct sockaddr_in relay = {0};
 
-	fd_set readfds;
-	struct timeval timeout;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-h") == 0) {
+            usage(argv[0]);
+            return 0;
+        } else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
+            script = argv[i + 1];
+            i++;
+        } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
+            tun = argv[i + 1];
+            i++;
+        } else {
+            parse_sockaddr_in(&relay, argv[i]);
+            continue;
+        }
+    }
 
-	maxfd = interface;
-	fcntl(interface, F_SETFL, O_NONBLOCK);
+	setuid(0);
+	interface = get_interface(tun);
+	run_config_script(tun, script);
+	relay_ip = (relay.sin_addr.s_addr);
+	relay_mask = htonl(0xffff);
 
-	system("ifconfig tun1 10.3.0.1/16 mtu 1420");
-	system("ifconfig tun1 10.3.0.1/16 up");
-	system("ip -4 r a 115.239.210.27 dev tun1");
-    system("ip -6 addr add 2001:c0a8:2b01::1/64 dev tun1");
-    system("ip -6 route add 2000::/3 dev tun1 metric 256 proto static");
-
-
-	while (true) {
-		u_char packet[1500];
-
-		FD_ZERO(&readfds);
-		FD_SET(interface, &readfds);
-
-		timeout.tv_sec = 1;
-		timeout.tv_usec = 0;
-		count = select(maxfd + 1, &readfds, NULL, NULL, &timeout);
-
-		if (count == 0 || count == -1) {
-			if (errno == EINTR) {
-				count = 0;
-			}
-
-			if (count == 0) {
-				//fprintf(stderr, "keep alive\n");
-				continue;
-			}
-
-			break;
-		}
-
-		if (FD_ISSET(interface, &readfds)) {
-			u_char buf[1500];
+	for (;;) {
 			int ln1, xdat;
-			unsigned char *fakeack;
+			u_char buf[1500], packet[1500];
+
 			int num = read(interface, packet, sizeof(packet));
-			if (num > 0) {
-				ln1 = translate_ip2ip(buf, sizeof(buf), packet, num);
-				if (ln1 > 0) {
-					write(interface, buf, ln1);
-				}
+			if (num <= 0) {
+					perror("interface read");
+					for (int i = 0; i < 10; i++) { sleep(1); fprintf(stderr, "."); }
+					break;
 			}
-		}
+
+			ln1 = translate_ip2ip(buf, sizeof(buf), packet, num, relay_ip, relay_mask, relay.sin_port);
+			if (ln1 > 0) {
+					write(interface, buf, ln1);
+			}
 	}
 
 	return 0;
