@@ -432,11 +432,11 @@ static tcpup_info *tcpup_wrapcb(struct tcpup_info *local, unsigned relayip, unsi
 		unsigned int subnet = relayip & ~relaymask;
 
 		unsigned short sport = (local->t_conv & 0xffff);
-		unsigned int sclient = subnet | ((local->t_conv >> 16)  & 0xffff);
+		unsigned int sclient = subnet | htonl((local->t_conv >> 16)  & 0xffff);
 
 		info0 = *local;
 
-		info0.t_peer.in.s_addr = htonl(sclient); 
+		info0.t_peer.in.s_addr = (sclient); 
 		info0.d_port = sport;
 
 		info0.t_from.in.s_addr = relayip;
@@ -449,11 +449,11 @@ static tcpup_info *tcpup_wrapcb(struct tcpup_info *local, unsigned relayip, unsi
 		unsigned int subnet = relayip & ~relaymask;
 
 		unsigned short sport = (local->t_conv & 0xffff);
-		unsigned int sclient = subnet | ((local->t_conv >> 16)  & 0xffff);
+		unsigned int sclient = subnet | htonl((local->t_conv >> 16)  & 0xffff);
 
 		info0 = *local;
 
-		info0.t_peer.in.s_addr = htonl(sclient); 
+		info0.t_peer.in.s_addr = (sclient); 
 		info0.d_port = sport;
 
 		info0.t_from.in.s_addr = relayip;
