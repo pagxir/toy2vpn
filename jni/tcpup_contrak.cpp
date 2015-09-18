@@ -61,7 +61,7 @@ static int _tot_tcp = 0;
 static int _tot_pid = 0;
 static int _tot_inc = 0;
 static struct tcpup_info *_tcpup_info_header = NULL;
-static unsigned char ip6_prefix[16] = {0x20, 0x01, 0xc0, 0xa8, 0x2b, 0x01};
+static unsigned char ip6_prefix[16] = {0x20, 0x01, 0x64, 0x6e, 0x73, 0x36, 0x34, 0x2e, 0x6e, 0x61, 0x74};
 
 static char const * const tcpstates[] = { 
 	"CLOSED",       "LISTEN",       "SYN_SENT",     "SYN_RCVD",
@@ -974,6 +974,8 @@ int tcpup_do_keepalive(tcpup_out_f *output, int tunnel, int xdat)
 
 static int sockv5_connect(void *buf, struct tcpup_info *xpp)
 {
+    static unsigned char nat64_prefix[16] = {0x20, 0x01, 0x64, 0x6e, 0x73, 0x36, 0x34, 0x2e, 0x6e, 0x61, 0x74};
+
 	if (xpp->ip_ver == 0x06) {
 		char *cmdp = (char *)buf;
 		*cmdp++ = 0x05;
@@ -983,9 +985,16 @@ static int sockv5_connect(void *buf, struct tcpup_info *xpp)
 		*cmdp++ = 0x05;
 		*cmdp++ = 0x01;
 		*cmdp++ = 0x00;
-		*cmdp++ = 0x04;
-		memcpy(cmdp, &xpp->t_peer.in6, 16);
-		cmdp += 16;
+		if (memcmp(nat64_prefix, &xpp->t_peer.in6, 12)) {
+			*cmdp++ = 0x04;
+			memcpy(cmdp, &xpp->t_peer.in6, 16);
+			cmdp += 16;
+		} else {
+			*cmdp++ = 0x01;
+			memcpy(cmdp, &xpp->t_peer.in6, 16);
+			memmove(cmdp, cmdp + 12, 4);
+			cmdp += 4;
+		}
 		memcpy(cmdp, &xpp->d_port, 2);
 		cmdp += 2;
 		return cmdp - (char *)buf;
