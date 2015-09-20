@@ -22,22 +22,15 @@
 #include "tcpup/dnstrak.h"
 #include "tcpup/contrak.h"
 
-#ifdef __FreeBSD__
+#ifdef __linux__
 #include <net/if.h>
-#include <net/if_tun.h>
+#include <linux/if_tun.h>
 #endif
 
 static int get_interface(const char *name)
 {
-	int multi=1;  
-	int interface = open("/dev/tun0", O_RDWR);
+	int interface = open("/dev/net/tun", O_RDWR);
 
-	if (ioctl(interface, TUNSIFHEAD, &multi) < 0) {  
-		close(interface);  
-		return -1;  
-	}
-
-#if 0
 	ifreq ifr;
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
@@ -47,7 +40,6 @@ static int get_interface(const char *name)
 		perror("Cannot get TUN interface");
 		exit(1);
 	}
-#endif
 
 	return interface;
 }
@@ -142,12 +134,15 @@ int main(int argc, char *argv[])
 	int count = 0;
 	int interface = 0;
 	unsigned relay_ip = 0;
-	unsigned relay_mask = 0;
+	unsigned wrap_net = 0;
+	unsigned wrap_mask = 0;
 	const char *tun = "socks0";
 	const char *script = "./tun2socks_ifup.socks0";
     struct sockaddr_in relay = {0};
+    struct sockaddr_in wrapnet = {0};
 
-    for (int i = 1; i < argc; i++) {
+	parse_sockaddr_in(&wrapnet, "10.3.0.0");
+	for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
             return 0;
@@ -156,6 +151,9 @@ int main(int argc, char *argv[])
             i++;
         } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
             tun = argv[i + 1];
+            i++;
+        } else if (strcmp(argv[i], "-x") == 0 && i + 1 < argc) {
+            parse_sockaddr_in(&wrapnet, argv[i]);
             i++;
         } else {
             parse_sockaddr_in(&relay, argv[i]);
@@ -167,10 +165,11 @@ int main(int argc, char *argv[])
 	interface = get_interface(tun);
 	run_config_script(tun, script);
 	relay_ip = (relay.sin_addr.s_addr);
-	relay_mask = htonl(0xffff);
+	wrap_net   = wrapnet.sin_addr.s_addr;
+	wrap_mask = htonl(0xffff);
 
 	for (;;) {
-			int ln1, xdat, test;
+			int ln1, xdat;
 			u_char buf[1500], packet[1500];
 
 			int num = read(interface, packet, sizeof(packet));
@@ -180,19 +179,9 @@ int main(int argc, char *argv[])
 					break;
 			}
 
-			ln1 = translate_ip2ip(buf + 4, sizeof(buf) - 4, packet + 4, num - 4, relay_ip, relay_mask, relay.sin_port);
+			ln1 = translate_ip2ip(buf, sizeof(buf), packet, num, wrap_net, wrap_mask, relay_ip, relay.sin_port);
 			if (ln1 > 0) {
-					switch (buf[4] & 0xf0) {
-						case 0x40:
-							*(int *)buf = htonl(AF_INET);
-							break;
-
-						case 0x60:
-							*(int *)buf = htonl(AF_INET6);
-							break;
-					}
-
-					write(interface, buf, ln1 + 4);
+					write(interface, buf, ln1);
 			}
 	}
 

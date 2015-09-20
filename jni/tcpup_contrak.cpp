@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <arpa/inet.h>
+#include <sys/types.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
@@ -38,6 +39,9 @@ struct tcpup_info {
 		struct in6_addr in6;
 	} t_from, t_peer;
 	int ip_ver;
+	int tr_flags;
+#define FLAG_SYN_RCVD    0x10
+#define FLAG_ESTABLISHED 0x80
 
 	tcp_seq rcv_una;
 	tcp_seq snd_una;
@@ -424,12 +428,12 @@ static tcpup_info *tcpup_newcb6(const struct in6_addr &src, const struct in6_add
 	return up;
 }
 
-static tcpup_info *tcpup_wrapcb(struct tcpup_info *local, unsigned relayip, unsigned relaymask, u_short port)
+static tcpup_info *tcpup_wrapcb(struct tcpup_info *local, unsigned wrapnet, unsigned mask, unsigned relayip, u_short port)
 {
 	static struct tcpup_info info0;
 
 	if (local != NULL && local->ip_ver == 0x04) {
-		unsigned int subnet = relayip & ~relaymask;
+		unsigned int subnet = wrapnet & ~mask;
 
 		unsigned short sport = (local->t_conv & 0xffff);
 		unsigned int sclient = subnet | htonl((local->t_conv >> 16)  & 0xffff);
@@ -446,7 +450,7 @@ static tcpup_info *tcpup_wrapcb(struct tcpup_info *local, unsigned relayip, unsi
 	}
 
 	if (local != NULL && local->ip_ver == 0x06) {
-		unsigned int subnet = relayip & ~relaymask;
+		unsigned int subnet = wrapnet & ~mask;
 
 		unsigned short sport = (local->t_conv & 0xffff);
 		unsigned int sclient = subnet | htonl((local->t_conv >> 16)  & 0xffff);
@@ -1018,11 +1022,12 @@ static int sockv5_connect(void *buf, struct tcpup_info *xpp)
 	return 0;
 }
 
-int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t length, unsigned relayip, unsigned mask, u_short port)
+int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t length, unsigned wrapnet, unsigned mask, unsigned relayip, u_short port)
 {
 	int offset;
 	int is_ipv6 = 1;
 	int cut_data = 0;
+	int old_ttl  = 0;
 	struct iphdr *ip;
 	struct ip6_hdr *ip6;
 	struct tcpiphdr *tcp;
@@ -1040,9 +1045,10 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 				return 0;
 			}
 
+			old_ttl = ip6->ip6_ctlun.ip6_un1.ip6_un1_hlim ;
 			{
 				xpp = tcpup_findcb6(ip6->ip6_src, ip6->ip6_dst, tcp->th_sport, tcp->th_dport);
-				upp = tcpup_wrapcb(xpp, relayip, mask, port);
+				upp = tcpup_wrapcb(xpp, wrapnet, mask, relayip, port);
 			}
 			break;
 
@@ -1054,6 +1060,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 				return 0;
 			}
 
+			old_ttl = ip->ttl;
 			if (relayip == ip->saddr && tcp->th_sport == port) {
 				unsigned int hipart = 0xffff & ntohl(ip->daddr);
 				upp = tcpup_lookup((hipart << 16) | tcp->th_dport);
@@ -1061,7 +1068,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 				xpp = upp;
 			} else {
 				xpp = tcpup_findcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport);
-				upp = tcpup_wrapcb(xpp, relayip, mask, port);
+				upp = tcpup_wrapcb(xpp, wrapnet, mask, relayip, port);
 			}
 			break;
 
@@ -1070,7 +1077,6 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 			is_ipv6 = 0;
 			return 0;
 	}
-
 
 	if (upp == NULL) {
 		if (tcp->th_flags & TH_RST) {
@@ -1090,7 +1096,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 				tcpup_newcb(ip->saddr, ip->daddr, tcp->th_sport, tcp->th_dport):
 				tcpup_newcb6(ip6->ip6_src, ip6->ip6_dst, tcp->th_sport, tcp->th_dport);
 			assert(xpp != NULL);
-			upp = tcpup_wrapcb(xpp, relayip, mask, port);
+			upp = tcpup_wrapcb(xpp, wrapnet, mask, relayip, port);
 		} else {
 			/* silent drop, ignore packet */
 			fprintf(stderr, "silent drop, ignore packet\n");
@@ -1098,6 +1104,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 		}
 	}
 
+	if (old_ttl) old_ttl--;
 	if (xpp != NULL) {
 		int flgmask = TH_SYN| TH_ACK| TH_RST;
 		int payload = (char *)pack + length - (char *)tcp;
@@ -1111,6 +1118,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 				ipo = (struct iphdr *)buf;
 				tcpo = (struct tcpiphdr *)(ipo + 1);
 				xpp->t_irs = htonl(tcp->th_seq);
+				xpp->tr_flags |= FLAG_SYN_RCVD;
 
 				ipo->ihl = 5;
 				ipo->version = 4;
@@ -1118,10 +1126,10 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 				ipo->id  = (0xffff & (long)ipo);
 				ipo->tot_len = htons(sizeof(*tcp) + sizeof(*ip));
 				ipo->frag_off = htons(0x4000);
-				ipo->ttl = 28;
+				ipo->ttl = old_ttl;
 				ipo->protocol = IPPROTO_TCP;
 
-				upp = tcpup_wrapcb(xpp, relayip, mask, port);
+				upp = tcpup_wrapcb(xpp, wrapnet, mask, relayip, port);
 				ipo->saddr = upp->t_peer.in.s_addr;
 				ipo->daddr = upp->t_from.in.s_addr;
 				ipo->check = 0;
@@ -1148,6 +1156,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 				return len + sizeof(*ipo);
 			} else {
 				if ((tcp->th_flags & flgmask) == TH_ACK &&
+						!(xpp->tr_flags & FLAG_ESTABLISHED) &&
 						xpp->t_iss + 1 == htonl(tcp->th_ack) &&
 						SEQ_GEQ(xpp->t_irs + 12, htonl(tcp->th_seq))) {
 					if (SEQ_GT(htonl(tcp->th_seq) + payload - (tcp->th_off << 2), xpp->t_irs + 12)) {
@@ -1155,6 +1164,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 						tcp_seq seq = (xpp->t_irs + 12);
 						tcp->th_seq = htonl(seq);
 						tcp->th_flags |= TH_SYN;
+						xpp->tr_flags |= FLAG_ESTABLISHED;
 						cut_data = 1;
 					} else {
 						int len;
@@ -1170,10 +1180,10 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 						ipo->id  = (0xffff & (long)ipo);
 						ipo->tot_len = htons(sizeof(*tcp) + sizeof(*ip));
 						ipo->frag_off = htons(0x4000);
-						ipo->ttl = 28;
+						ipo->ttl = old_ttl;
 						ipo->protocol = IPPROTO_TCP;
 
-						upp = tcpup_wrapcb(xpp, relayip, mask, port);
+						upp = tcpup_wrapcb(xpp, wrapnet, mask, relayip, port);
 						ipo->saddr = upp->t_peer.in.s_addr;
 						ipo->daddr = upp->t_from.in.s_addr;
 						ipo->check = 0;
@@ -1194,24 +1204,66 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 						tcpo->th_sport = upp->d_port;
 						tcpo->th_sum = 0;
 
-						fprintf(stderr, "fake ack\n");
+						fprintf(stderr, "send fake ack\n");
 						tcp_checksum(&tcpo->th_sum, 0, &ipo->saddr, &ipo->daddr, tcpo, len);
 						ip_checksum(&ipo->check, ipo, sizeof(*ipo));
-						fprintf(stderr, "ignore packet\n");
 						return len + sizeof(*ipo);
 					}
 				}
 				tcpup_state_receive(xpp, tcp, cut_data? 0: payload - (tcp->th_off << 2));
 			}
 		} else {
-			if (tcp->th_flags & TH_SYN) {
-				char buf[512];
+			char buf[512];
+			if ((tcp->th_flags & TH_SYN) && !(xpp->tr_flags & FLAG_SYN_RCVD)) {
 				fprintf(stderr, "fake request\n");
 				int ign_len = sockv5_connect(buf, xpp);
 				tcp_seq seq = htonl(tcp->th_seq);
 				tcp->th_seq = htonl(seq - ign_len);
 				xpp->t_iss = seq;
+			} else if ((tcp->th_flags & TH_SYN) == TH_SYN) {
+				int len, clen;
+				struct iphdr *ipo;
+				struct tcpiphdr *tcpo;
+
+				ipo = (struct iphdr *)buf;
+				tcpo = (struct tcpiphdr *)(ipo + 1);
+
+				ipo->ihl = 5;
+				ipo->version = 4;
+				ipo->tos = 0;
+				ipo->id  = (0xffff & (long)ipo);
+				ipo->tot_len = htons(sizeof(*tcp) + sizeof(*ip));
+				ipo->frag_off = htons(0x4000);
+				ipo->ttl = old_ttl;
+				ipo->protocol = IPPROTO_TCP;
+
+				upp = tcpup_wrapcb(xpp, wrapnet, mask, relayip, port);
+				ipo->saddr = upp->t_peer.in.s_addr;
+				ipo->daddr = upp->t_from.in.s_addr;
+				ipo->check = 0;
+
+				len = sizeof(*tcp) + (clen - sockv5_connect(tcpo + 1, xpp));
+				tcpo->th_flags = TH_ACK;
+				tcpo->th_seq   = htonl(xpp->t_iss - clen);
+				tcpo->th_ack   = htonl(xpp->t_irs + 1);
+
+				tcpo->th_off    = sizeof(*tcp) >> 2;
+				tcpo->th_x2     = 0;
+				tcpo->th_urp    = 0;
+				tcpo->th_win    = htons(4096);
+
+				ipo->tot_len = htons(len + sizeof(*ip));
+
+				tcpo->th_dport = upp->s_port;
+				tcpo->th_sport = upp->d_port;
+				tcpo->th_sum = 0;
+
+				fprintf(stderr, "fake response\n");
+				tcp_checksum(&tcpo->th_sum, 0, &ipo->saddr, &ipo->daddr, tcpo, len);
+				ip_checksum(&ipo->check, ipo, sizeof(*ipo));
+				return len + sizeof(*ipo);
 			}
+
 			tcpup_state_send(xpp, tcp, payload - (tcp->th_off << 2));
 		}
 	}
@@ -1227,7 +1279,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 		ipo6->ip6_ctlun.ip6_un1.ip6_un1_plen = htons(sizeof(*tcpo));
 
 		ipo6->ip6_ctlun.ip6_un1.ip6_un1_nxt = IPPROTO_TCP;
-		ipo6->ip6_ctlun.ip6_un1.ip6_un1_hlim = 10;
+		ipo6->ip6_ctlun.ip6_un1.ip6_un1_hlim = old_ttl;
 
 		int len = (char *)pack + length - (char *)tcp;
 		if (cut_data) len = (tcp->th_off << 2);
@@ -1255,7 +1307,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 		ipo->id  = (0xffff & (long)ipo);
 		ipo->tot_len = htons(sizeof(*tcp) + sizeof(*ip));
 		ipo->frag_off = htons(0x4000);
-		ipo->ttl = 28;
+		ipo->ttl = old_ttl;
 		ipo->protocol = IPPROTO_TCP;
 
 		ipo->saddr = upp->t_peer.in.s_addr;
