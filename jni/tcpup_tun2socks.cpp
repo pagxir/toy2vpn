@@ -22,15 +22,22 @@
 #include "tcpup/dnstrak.h"
 #include "tcpup/contrak.h"
 
-#ifdef __linux__
+#ifdef __FreeBSD__
 #include <net/if.h>
-#include <linux/if_tun.h>
+#include <net/if_tun.h>
 #endif
 
 static int get_interface(const char *name)
 {
-	int interface = open("/dev/net/tun", O_RDWR);
+	int multi=1;  
+	int interface = open("/dev/tun0", O_RDWR);
 
+	if (ioctl(interface, TUNSIFHEAD, &multi) < 0) {  
+		close(interface);  
+		return -1;  
+	}
+
+#if 0
 	ifreq ifr;
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
@@ -40,6 +47,7 @@ static int get_interface(const char *name)
 		perror("Cannot get TUN interface");
 		exit(1);
 	}
+#endif
 
 	return interface;
 }
@@ -162,7 +170,7 @@ int main(int argc, char *argv[])
 	relay_mask = htonl(0xffff);
 
 	for (;;) {
-			int ln1, xdat;
+			int ln1, xdat, test;
 			u_char buf[1500], packet[1500];
 
 			int num = read(interface, packet, sizeof(packet));
@@ -172,9 +180,19 @@ int main(int argc, char *argv[])
 					break;
 			}
 
-			ln1 = translate_ip2ip(buf, sizeof(buf), packet, num, relay_ip, relay_mask, relay.sin_port);
+			ln1 = translate_ip2ip(buf + 4, sizeof(buf) - 4, packet + 4, num - 4, relay_ip, relay_mask, relay.sin_port);
 			if (ln1 > 0) {
-					write(interface, buf, ln1);
+					switch (buf[4] & 0xf0) {
+						case 0x40:
+							*(int *)buf = htonl(AF_INET);
+							break;
+
+						case 0x60:
+							*(int *)buf = htonl(AF_INET6);
+							break;
+					}
+
+					write(interface, buf, ln1 + 4);
 			}
 	}
 
