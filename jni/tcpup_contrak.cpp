@@ -1242,7 +1242,7 @@ int translate_ip2ip(unsigned char *buf, size_t size, unsigned char *pack, size_t
 				ipo->daddr = upp->t_from.in.s_addr;
 				ipo->check = 0;
 
-				len = sizeof(*tcp) + (clen - sockv5_connect(tcpo + 1, xpp));
+				len = sizeof(*tcp) + (clen = sockv5_connect(tcpo + 1, xpp));
 				tcpo->th_flags = TH_ACK;
 				tcpo->th_seq   = htonl(xpp->t_iss - clen);
 				tcpo->th_ack   = htonl(xpp->t_irs + 1);

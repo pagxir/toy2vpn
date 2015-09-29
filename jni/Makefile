@@ -1,5 +1,5 @@
 #CXXFLAGS=-DUSE_DNS_MODE
-LDLIBS=-lrt
+LDLIBS=-static -lrt
 COBJECTS=tcpup_toyvpn.o tcpup_ip.o tcpup_up.o tcpup_crypt.o tcpup_contrak.o tcpup_dnstrak.o
 SOBJECTS=tcpup_agent.o tcpup_ip.o tcpup_up.o tcpup_crypt.o tcpup_contrak.o tcpup_dnstrak.o
 TOBJECTS=tcpup_tun2socks.o tcpup_ip.o tcpup_up.o tcpup_crypt.o tcpup_contrak.o tcpup_dnstrak.o
