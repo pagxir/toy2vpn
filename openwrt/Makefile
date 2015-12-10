@@ -23,6 +23,7 @@ define Package/tun2socks
 	SECTION:=utils
 	CATEGORY:=Utilities
 	TITLE:=tun2socks -- prints a snarky message
+	DEPENDS := +libstdcpp +librt
 endef
 
 # Uncomment portion below for Kamikaze and delete DESCRIPTION variable above
@@ -39,7 +40,7 @@ endef
 # much easier to do it this way.
 define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)
-	$(CP) ./jni/* $(PKG_BUILD_DIR)/
+	$(CP) ../jni/* $(PKG_BUILD_DIR)/
 endef
 
 # We do not need to define Build/Configure or Build/Compile directives
