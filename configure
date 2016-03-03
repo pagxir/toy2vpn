@@ -1,5 +1,5 @@
 
-android update project -p `pwd` -t android-15
+android update project -p `pwd` -t 1
 
 cat << EOF >> local.properties
 #key.store = /home/level/android-toolkit/android.keystore
@@ -8,3 +8,23 @@ cat << EOF >> local.properties
 #key.alias.password=xxxxxxxxxxxx
 EOF
 
+cat << EOF > res/values/servers.xml
+<resources>
+	<string-array name="vpn_site_list">
+		<item>Los Angeles(UDP):wall.cybersky.club:UDP,port=53,secret=hello</item>
+		<item>Los Angeles(UDP):www.cybersky.club:UDP,port=53,secret=hello</item>
+	</string-array>
+</resources>
+EOF
+
+cat << EOF > res/values/servers.xml
+<resources>
+	<string-array name="vpn_site_list">
+EOF
+
+wget -O - http://blog.keziwo.com/downloads/upn.conf |sed "s/|//"|sed "s#.*#<item>&</item>#" >> res/values/servers.xml
+
+cat << EOF >> res/values/servers.xml
+	</string-array>
+</resources>
+EOF

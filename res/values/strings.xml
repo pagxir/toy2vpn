@@ -30,10 +30,4 @@
     <string name="menu_restore">config</string>
     <string name="permission_deny">This device must be root, otherwise could not create ping socket</string>
     <string name="vpn_device_config">"m,1280 d,114.114.114.114 a,10.2.0.15,24 a,2002:c0a8::2,100 r,::,0 rL,EXTERNAL c,2ae8944a.0805159c @,625558ec "</string>
-
-	<string-array name="vpn_site_list">
-		<item>Los Angeles(UDP):wall.cybersky.club:UDP,port=53,secret=hello</item>
-		<item>Los Angeles(UDP):www.cybersky.club:UDP,port=53,secret=hello</item>
-	</string-array>
-
 </resources>
